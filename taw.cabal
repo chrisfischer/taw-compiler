@@ -1,0 +1,28 @@
+name:                taw
+version:             0.1
+synopsis:            Compiler of a c-like language
+description:         Compiler of a c-like language
+author:              Logan May, Chris Fischer
+Category:            Compilers
+build-type:          Simple
+cabal-version:       >=1.10
+
+executable llvm_test
+  default-language:    Haskell2010
+  main-is:             Tests.hs
+  hs-source-dirs:      src
+  other-modules:
+    Frontend
+    LLVMGen
+  build-depends:
+      base                 >= 4.7 && <5
+    , haskeline            >= 0.7.5.0
+    , llvm-hs              >= 9.0.1
+    , llvm-hs-pure         >= 9.0.0
+    , parsec               >= 3.1
+    , mtl                  >= 2.1.3
+    , transformers         >= 0.3.0.0 && < 0.6
+    , containers           >= 0.4
+    , bytestring           >= 0.10
+    , QuickCheck           >= 2.13
+
