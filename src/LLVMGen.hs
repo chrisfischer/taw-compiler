@@ -1,0 +1,384 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
+module LLVMGen where
+
+import Data.Word
+import Data.String
+import Data.List
+import Data.Function
+import qualified Data.Map as Map
+
+import Control.Monad.State
+import Control.Applicative
+
+import LLVM.Prelude
+import LLVM.AST.Global
+
+import qualified LLVM.AST as AST
+import qualified LLVM.AST.Linkage as L
+import qualified LLVM.AST.Constant as C
+import qualified LLVM.AST.Float as F
+import qualified LLVM.AST.Attribute as A
+import qualified LLVM.AST.CallingConvention as CC
+import qualified LLVM.AST.FloatingPointPredicate as FP
+import qualified LLVM.AST.IntegerPredicate as IP
+
+-- MODULES
+
+-- | State monad to build up a LLVM module as the AST of the source language
+-- is traversed
+newtype LLVM a = LLVM (State AST.Module a)
+  deriving (Functor, Applicative, Monad, MonadState AST.Module)
+
+runLLVM :: AST.Module -> LLVM a -> AST.Module
+runLLVM mod (LLVM m) = execState m mod
+
+-- | Create a named empty module
+emptyModule :: ShortByteString -> AST.Module
+emptyModule label = AST.defaultModule { AST.moduleName = label }
+
+-- | Append a new declaration to the current module
+addDefn :: AST.Definition -> LLVM ()
+addDefn d = do
+  modify $ \s -> s { AST.moduleDefinitions = AST.moduleDefinitions s ++ [d] }
+
+-- | Define a new function
+define :: AST.Type
+          -> ShortByteString
+          -> [(AST.Type, AST.Name)]
+          -> [BasicBlock]
+          -> LLVM ()
+define retty label argtys body = addDefn $
+  AST.GlobalDefinition $ functionDefaults {
+    name        = AST.Name label
+  , parameters  = ([Parameter ty nm [] | (ty, nm) <- argtys], False)
+  , returnType  = retty
+  , basicBlocks = body
+  }
+
+-- Declare a new external function
+external :: AST.Type
+            -> ShortByteString
+            -> [(AST.Type, AST.Name)]
+            -> LLVM ()
+external retty label argtys = addDefn $
+  AST.GlobalDefinition $ functionDefaults {
+    name        = AST.Name label
+  , linkage     = L.External
+  , parameters  = ([Parameter ty nm [] | (ty, nm) <- argtys], False)
+  , returnType  = retty
+  , basicBlocks = []
+  }
+
+-- FUNCTION GENERATION STATE
+
+data FunctionGenState
+  = FunctionGenState {
+    -- Name of the active block to append to
+    currentBlock :: AST.Name
+    -- Blocks for function
+  , blocks :: Map.Map AST.Name BlockState
+    -- Function scope symbol table
+  , symbleTable :: Map.Map ShortByteString AST.Operand
+    -- Count of basic blocks
+  , blockCount :: Int
+    -- Count of unnamed instructions, used to get the next free number
+  , count :: Word
+    -- Map from names to number of times it has been used
+  , names :: Map.Map ShortByteString Int
+  } deriving Show
+
+data BlockState
+  = BlockState {
+    -- Block index
+    idx :: Int
+    -- Stack of instructions
+  , stack :: [AST.Named AST.Instruction]
+    -- Block terminator
+  , term :: Maybe (AST.Named AST.Terminator)
+  } deriving Show
+
+-- FUNCTION GENERATION
+
+-- | State monad to build up a function's blocks as the AST of the source
+-- language is traversed
+newtype FunctionGen a =
+  FunctionGen { runFunctionGen :: State FunctionGenState a}
+  deriving (Functor, Applicative, Monad, MonadState FunctionGenState )
+
+  -- | Extract the generated function out of its state monad
+execFunctionGen :: FunctionGen a -> FunctionGenState
+execFunctionGen m = execState (runFunctionGen m) emptyFunctionGen where
+  -- | Create a new FunctionGen with the current block set as the entry block
+  emptyFunctionGen :: FunctionGenState
+  emptyFunctionGen = FunctionGenState
+    entryBlockName Map.empty Map.empty 1 0 Map.empty
+
+-- | Name of the first block in all functions
+entryBlockName :: AST.Name
+entryBlockName = AST.Name "entry"
+
+-- | Transform a FunctionState into
+createBlocks :: FunctionGenState -> [BasicBlock]
+createBlocks m = map makeBlock $ sortBlocks $ Map.toList (blocks m) where
+  -- Sort by the block index
+  sortBlocks :: [(AST.Name, BlockState)] -> [(AST.Name, BlockState)]
+  sortBlocks = sortBy (compare `on` (idx . snd))
+  -- | Transform a BlockState into a BasicBlock with a given name
+  makeBlock :: (AST.Name, BlockState) -> BasicBlock
+  makeBlock (l, (BlockState _ s (Just t))) = BasicBlock l (reverse s) t
+  makeBlock (l, (BlockState _ _ Nothing)) =
+    error $ "Block has no terminator: " ++ (show l)
+
+-- | Create an empty block with the given index
+emptyBlock :: Int -> BlockState
+emptyBlock i = BlockState i [] Nothing
+
+-- | Adds a block with the given name
+addBlock :: ShortByteString -> FunctionGen AST.Name
+addBlock blockName = do
+  bls <- gets blocks
+  count  <- gets blockCount
+  name' <- freshName blockName
+  modify $ \s -> s { blocks = Map.insert (AST.Name name') (emptyBlock count) bls
+                   , blockCount = count + 1
+                   }
+  return $ AST.Name name'
+
+-- | Sets the current block name to the given name
+setCurrentBlock :: AST.Name -> FunctionGen AST.Name
+setCurrentBlock blockName = do
+  modify $ \s -> s { currentBlock = blockName }
+  return blockName
+
+-- | Sets the contents of the current block to the given state
+modifyBlock :: BlockState -> FunctionGen ()
+modifyBlock b = do
+  activeName <- getCurrentBlockName
+  modify $ \s -> s { blocks = Map.insert activeName b (blocks s) }
+
+-- | Returns the name of the current block
+getCurrentBlockName :: FunctionGen AST.Name
+getCurrentBlockName = gets currentBlock
+
+-- | Returns the contents of the current block
+getCurrentBlock :: FunctionGen BlockState
+getCurrentBlock = do
+  c <- getCurrentBlockName
+  blks <- gets blocks
+  case Map.lookup c blks of
+    Just x -> return x
+    Nothing -> error $ "No such block: " ++ show c
+
+-- | Get a fresh number to use for unnamed statements
+freshUnName :: FunctionGen Word
+freshUnName = do
+  i <- gets count
+  modify $ \s -> s { count = 1 + i }
+  return $ i + 1
+
+-- | Converts a name into a unique name
+freshName :: ShortByteString -> FunctionGen ShortByteString
+freshName name = do
+  ns <- gets names
+  let (name', ns') = uniqueName name ns
+  modify $ \s -> s { names = ns' }
+  return name'
+  where
+    uniqueName name names = case Map.lookup name names of
+      Just i  -> (name <> fromString (show i), Map.insert name (i + 1) names)
+      Nothing -> (name, Map.insert name 1 names)
+
+-- | Append a new instruction to the current block
+instr :: AST.Type -> AST.Instruction -> FunctionGen (AST.Operand)
+instr ty ins = do
+  n <- freshUnName
+  let ref = AST.UnName n
+  block <- getCurrentBlock
+  let insns = stack block
+  modifyBlock (block { stack = (ref AST.:= ins) : insns } )
+  return $ local ty ref
+
+-- | Set the terminator for the current block
+terminator :: AST.Named AST.Terminator -> FunctionGen (AST.Named AST.Terminator)
+terminator term = do
+  block <- getCurrentBlock
+  modifyBlock (block { term = Just term })
+  return term
+
+-- SYMBOL TABLE
+
+-- | Assign a name to the given LLVM operand
+assign :: ShortByteString -> AST.Operand -> FunctionGen ()
+assign var x = modify $ \s ->
+  s { symbleTable = Map.insert var x (symbleTable s) }
+
+-- | Get the LLVM operand associated with the given string
+getVar :: ShortByteString -> FunctionGen AST.Operand
+getVar var = do
+  syms <- gets symbleTable
+  case Map.lookup var syms of
+    Just x  -> return x
+    Nothing -> error $ "Local variable not in scope: " ++ show var
+
+-- REFERENCES
+
+local :: AST.Type -> AST.Name -> AST.Operand
+local = AST.LocalReference
+
+global :: AST.Type -> AST.Name -> C.Constant
+global = C.GlobalReference
+
+externf :: AST.Type -> AST.Name -> AST.Operand
+externf ty = AST.ConstantOperand . (C.GlobalReference ty)
+
+-- TYPES
+
+booleanSize :: Word32
+booleanSize = 1
+
+integerSize :: Word32
+integerSize = 64
+
+double :: AST.Type
+double = AST.FloatingPointType AST.DoubleFP
+
+integer :: AST.Type
+integer = AST.IntegerType integerSize
+
+boolean :: AST.Type
+boolean = AST.IntegerType booleanSize
+
+-- Variable numbers of arguments is not allowed
+functionPtr :: AST.Type -> [AST.Type] -> AST.Type
+functionPtr retty argtys = AST.FunctionType retty argtys False
+
+-- CONSTANTS
+
+cons :: C.Constant -> AST.Operand
+cons = AST.ConstantOperand
+
+-- | Create a constant operand with the given integer value
+integerConst :: Integer -> AST.Operand
+integerConst i = cons $ C.Int integerSize i
+
+-- | Create a constant operand with the given float value
+doubleConst :: Double -> AST.Operand
+doubleConst i = cons $ C.Float $ F.Double i
+
+-- | Create a constant operand with the given boolean value
+booleanConst :: Bool -> AST.Operand
+booleanConst b = cons $ C.Int booleanSize $ toInteger $ fromEnum b
+
+-- OPERATORS
+
+-- | Float addition
+fadd :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+fadd a b = instr double $ AST.FAdd AST.noFastMathFlags a b []
+
+-- | Float subtraction
+fsub :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+fsub a b = instr double $ AST.FSub AST.noFastMathFlags a b []
+
+-- | Float multiplication
+fmul :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+fmul a b = instr double $ AST.FMul AST.noFastMathFlags a b []
+
+-- | Float division
+fdiv :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+fdiv a b = instr double $ AST.FDiv AST.noFastMathFlags a b []
+
+-- | Float comparision
+fcmp :: FP.FloatingPointPredicate -> AST.Operand -> AST.Operand
+        -> FunctionGen AST.Operand
+fcmp cond a b = instr double $ AST.FCmp cond a b []
+
+-- | Integer addition
+iadd :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+iadd a b = instr integer $ AST.Add False False a b []
+
+-- | Integer subtraction
+isub :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+isub a b = instr integer $ AST.Sub False False a b []
+
+-- | Integer multiplication
+imul :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+imul a b = instr integer $ AST.Mul False False a b []
+
+-- | Integer division
+idiv :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+idiv a b = instr integer $ AST.SDiv False a b []
+
+-- | Integer comparisons
+icmp :: IP.IntegerPredicate -> AST.Operand -> AST.Operand
+        -> FunctionGen AST.Operand
+icmp cond a b = instr integer $ AST.ICmp cond a b []
+
+-- | Integer left shift
+ilshift :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+ilshift a b = instr integer $ AST.Shl False False a b []
+
+-- | Integer right shift (arithmatic)
+irshift :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+irshift a b = instr integer $ AST.AShr False a b []
+
+-- | Integer bitwise and
+iand :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+iand a b = instr integer $ AST.And a b []
+
+-- | Integer bitwise or
+ior :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+ior a b = instr integer $ AST.Or a b []
+
+-- | Integer modulo
+imod :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+imod a b = instr integer $ AST.SRem a b []
+
+-- | Boolean and
+band :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+band a b = instr boolean $ AST.And a b []
+
+-- | Boolean or
+bor :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+bor a b = instr boolean $ AST.Or a b []
+
+-- | Boolean not
+bnot :: AST.Operand -> FunctionGen AST.Operand
+bnot a = instr boolean $ AST.Xor (booleanConst True) a []
+
+-- EXPRESSIONS
+
+-- Call the given function with the given arguments
+call :: AST.Operand -> [AST.Operand] -> AST.Type -> FunctionGen AST.Operand
+call fun args retty =
+  instr retty $ AST.Call Nothing CC.C [] (Right fun) (toArgs args) [] [] where
+    -- Adds empty parameter attributes
+    toArgs :: [AST.Operand] -> [(AST.Operand, [A.ParameterAttribute])]
+    toArgs = map (\x -> (x, []))
+
+-- | Allocate space for a local variable of the given type
+alloca :: AST.Type -> FunctionGen AST.Operand
+alloca ty = instr ty $ AST.Alloca ty Nothing 0 []
+
+-- | Store the given value at the given pointer
+store :: AST.Type -> AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+store ty val ptr = instr ty $ AST.Store False ptr val Nothing 0 []
+
+-- | Load value stored at the given pointer
+load :: AST.Type -> AST.Operand -> FunctionGen AST.Operand
+load ty ptr = instr ty $ AST.Load False ptr Nothing 0 []
+
+-- CONTROL FLOW
+
+-- Branch
+br :: AST.Name -> FunctionGen (AST.Named AST.Terminator)
+br val = terminator $ AST.Do $ AST.Br val []
+
+-- Contiditonal branch
+cbr :: AST.Operand -> AST.Name -> AST.Name -> FunctionGen (AST.Named AST.Terminator)
+cbr cond tr fl = terminator $ AST.Do $ AST.CondBr cond tr fl []
+
+-- Return
+ret :: AST.Operand -> FunctionGen (AST.Named AST.Terminator)
+ret val = terminator $ AST.Do $ AST.Ret (Just val) []
