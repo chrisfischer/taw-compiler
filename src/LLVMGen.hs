@@ -294,6 +294,10 @@ fcmp :: FP.FloatingPointPredicate -> AST.Operand -> AST.Operand
         -> FunctionGen AST.Operand
 fcmp cond a b = instr double $ AST.FCmp cond a b []
 
+-- | Float negation
+fneg :: AST.Operand -> FunctionGen AST.Operand
+fneg a = instr double $ AST.FSub AST.noFastMathFlags (doubleConst 0) a []
+
 -- | Integer addition
 iadd :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
 iadd a b = instr integer $ AST.Add False False a b []
@@ -334,6 +338,10 @@ ior a b = instr integer $ AST.Or a b []
 -- | Integer modulo
 imod :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
 imod a b = instr integer $ AST.SRem a b []
+
+-- | Integer negation
+ineg :: AST.Operand -> FunctionGen AST.Operand
+ineg a = instr integer $ AST.Sub False False (integerConst 0) a []
 
 -- | Boolean and
 band :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
