@@ -2,13 +2,15 @@ module Ast where
 
 import Data.Int
 
-data Node a = Node { elt :: a, loc :: Int }
+data Node a = Node { elt :: a, loc :: Loc } deriving (Show, Eq)
 
 type Id = String
 
+type Loc = Int
+
 data Ty =
-   TBool
- | TInt
+    TBool
+  | TInt
   deriving (Show, Eq)
 
 data Rty =
@@ -17,6 +19,12 @@ data Rty =
 
 data Retty =
   RetVal Ty
+  deriving (Show, Eq)
+
+data ValueTy =
+    VBool Bool
+  | VInt Int
+  | VFun Id
   deriving (Show, Eq)
 
 data Unop =
@@ -41,29 +49,29 @@ data Binop =
   | IOr
   | Shl
   | Shr
-  | Sar
   | Mod
   deriving (Show, Eq, Enum)
 
 data Exp =
     CBool Bool
-  | CInt Int64
+  | CInt Int
   | Id Id
   | Call (Node Exp) [Node Exp]
   | Bop Binop (Node Exp) (Node Exp)
   | Uop Unop (Node Exp)
   deriving (Show, Eq)
 
-data Vdecl = VDecl Id (Node Exp) deriving (Show, Eq)
+data Vdecl = Vdecl Id (Node Exp) deriving (Show, Eq)
 
 data Stmt =
     Assn (Node Exp) (Node Exp)
   | Decl Vdecl
-  | Ret (Maybe (Node Exp))
-  | SCall (Node Exp) [Node Exp]
-  | If (Node Exp) [Node Stmt] [Node Stmt]
-  | For [Vdecl] (Maybe (Node Exp)) (Maybe (Node Stmt)) [Node Stmt]
-  | While (Node Exp) [Node Stmt]
+  | Ret (Node Exp)
+  -- | SCall (Node Exp) [Node Exp]
+  | If (Node Exp) Block Block
+  | For [Vdecl] (Maybe (Node Exp)) (Maybe (Node Stmt)) Block
+  | While (Node Exp) Block
+  | Nop
   deriving (Show, Eq)
 
 type Block = [Node Stmt]
