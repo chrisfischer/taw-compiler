@@ -8,6 +8,7 @@ import Data.IORef
 import Data.Word
 import Data.Int
 import qualified Data.ByteString.Short as BS
+import qualified Data.ByteString.Char8 as BS8
 
 import LLVM.AST.Global
 import LLVM.AST.Constant
@@ -33,6 +34,8 @@ runJIT mod fentry = do
       M.withModuleFromAST context mod $ \m ->
         EE.withModuleInEngine executionEngine m $ \ee -> do
           mainfn <- EE.getFunction ee $ AST.Name fentry
+          -- s <- M.moduleLLVMAssembly m
+          -- BS8.putStrLn s
           case mainfn of
             Just fn -> do
               res <- run fn
@@ -41,13 +44,13 @@ runJIT mod fentry = do
               return $ Left $ show $ "Entry function not found: " <> fentry
 
 
-instance Arbitrary Syntax.Prog where
-  arbitrary = undefined
-  shrink = undefined
+-- instance Arbitrary Syntax.Prog where
+--   arbitrary = undefined
+--   shrink = undefined
 
 
 int :: AST.Type
-int = AST.IntegerType 32
+int = AST.IntegerType 64
 
 defAdd :: AST.Definition
 defAdd = AST.GlobalDefinition AST.functionDefaults
@@ -60,7 +63,7 @@ defAdd = AST.GlobalDefinition AST.functionDefaults
     body = BasicBlock
         (AST.Name "entry")
         []
-        (AST.Do $ AST.Ret (Just (AST.ConstantOperand (Int 32 42))) [])
+        (AST.Do $ AST.Ret (Just (AST.ConstantOperand (Int 64 42))) [])
 
 
 module_ :: AST.Module
@@ -71,6 +74,6 @@ module_ = AST.defaultModule
 
 main :: IO ()
 main = do
-  res <- runJIT module_ "sdfsd"
+  res <- runJIT module_ "main"
   putStrLn "Eager JIT Result:"
   print res
