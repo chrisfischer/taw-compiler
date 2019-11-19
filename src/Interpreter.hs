@@ -32,16 +32,16 @@ data FunctionContext
 -- Convienience Initializers
 
 -- | Intializes an empty function context with no parent
-emptyFunctionContext = FunctionContext "<string>" Nothing Map.empty Nothing
+emptyFunctionContext fn = FunctionContext fn Nothing Map.empty Nothing
 
 -- | Intializes an empty global context with no parent
-emptyGlobalContext = GlobalContext emptyFunctionContext Map.empty
+emptyGlobalContext entry = GlobalContext (emptyFunctionContext entry) Map.empty
 
 -- | Initializes context with global decls and sets functions
-gCtxtFromProg :: Prog -> GlobalContext
-gCtxtFromProg prog =
+gCtxtFromProg :: Id -> Prog -> GlobalContext
+gCtxtFromProg entry prog =
   let fs = map (\(Gfdecl f@(Node (Fdecl _ fname _ _) _)) -> (fname, f)) prog in
-  emptyGlobalContext { fdecls = Map.fromList fs }
+  (emptyGlobalContext entry) { fdecls = Map.fromList fs }
 
 -- Helper functions
 
@@ -58,15 +58,15 @@ lookUpValue :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
                Id -> m ValueTy
 lookUpValue x = do
   curr <- gets currCtxt
-  lookUpFunCtxt x curr where
+  lookUpFunCtxt x curr (fnm curr) where
     lookUpFunCtxt :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
-                     Id -> FunctionContext -> m ValueTy
-    lookUpFunCtxt x c =
+                     Id -> FunctionContext -> Id -> m ValueTy
+    lookUpFunCtxt x c fid =
       case Map.lookup x $ vs c of
         Just v  -> return v
         Nothing -> case parentCtxt c of
-          Just c' -> lookUpFunCtxt x c'
-          Nothing -> do
+          Just c' | (fnm c' == fid) -> lookUpFunCtxt x c' fid
+          _ -> do
             Node (Fdecl _ fn _ _) _ <- lookUpFdecl x
             return $ VFun fn
             -- TODO better errors
@@ -77,16 +77,16 @@ assignValue :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
             Id -> ValueTy -> m ()
 assignValue x v = do
   curr <- gets currCtxt
-  setInFunCtxt x v curr where
+  setInFunCtxt x v curr (fnm curr) where
     setInFunCtxt :: (MonadError (Int, String) m, MonadState GlobalContext m)
-                    => Id -> ValueTy -> FunctionContext -> m ()
-    setInFunCtxt x v c =
+                    => Id -> ValueTy -> FunctionContext -> Id -> m ()
+    setInFunCtxt x v c fid =
       case Map.lookup x $ vs c of
         Just v -> modify $ \s ->
           s { currCtxt = (currCtxt s) { vs = Map.insert x v $ vs c } }
         Nothing -> case parentCtxt c of
-          Just c' -> setInFunCtxt x v c'
-          Nothing -> throwError (0, "Variable " ++ x ++ " not found")
+          Just c' | (fnm c' == fid) -> setInFunCtxt x v c' fid
+          _ -> throwError (0, "Variable " ++ x ++ " not found")
 
 -- | Adds a new binding for the given Id in the current context
 declValue :: MonadState GlobalContext m => Id -> ValueTy -> m ()
@@ -112,28 +112,44 @@ setRetValue v = do
 -- | Creates a new context with the given name and the current as its parent
 pushContext :: MonadState GlobalContext m => Id -> m ()
 pushContext name = modify $ \s ->
-  s { currCtxt = emptyFunctionContext {
-      fnm = name
-    , parentCtxt = (Just $ currCtxt s) } }
+  s { currCtxt = (emptyFunctionContext name) {
+      parentCtxt = (Just $ currCtxt s) } }
 
 -- | Creates a new context with the current as its parent with the same name
 pushSubContext :: MonadState GlobalContext m => m ()
 pushSubContext = modify $ \s ->
-  s { currCtxt = emptyFunctionContext {
-      fnm = fnm (currCtxt s)
-    , parentCtxt = (Just $ currCtxt s) } }
+  s { currCtxt = (emptyFunctionContext $ fnm (currCtxt s)) {
+      parentCtxt = (Just $ currCtxt s) } }
 
--- TODO pop contexts until we reach the last function
--- | Sets the current context as the current parent and returns an optional
--- return value
-popContext :: MonadState GlobalContext m => m (Maybe ValueTy)
-popContext = do
+-- | Sets the current context as the current parent and ignores the return value
+popSubContext :: MonadState GlobalContext m => m ()
+popSubContext = do
   curr <- gets currCtxt
   let curr' = case parentCtxt curr of
                 Nothing -> curr
                 Just c  -> c
   modify $ \s -> s { currCtxt = curr' }
-  return $ retVal curr
+
+-- | Sets the current context as the first parent context with a different
+-- function name
+popContext :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
+              m (Maybe ValueTy)
+popContext = do
+  curr <- gets currCtxt
+  let f = fnm curr
+  case findDifferentParent f curr of
+    Just c' -> do
+      modify $ \s -> s { currCtxt = c' }
+      return $ retVal curr
+    Nothing -> throwError (11, "Cannot pop top level context")
+  where
+    findDifferentParent :: Id -> FunctionContext -> Maybe FunctionContext
+    findDifferentParent id c =
+      if fnm c == id then do
+        p <- parentCtxt c
+        p' <- findDifferentParent id p
+        return p'
+      else Just c
 
 --------------------------------------------------------------------------
 
@@ -225,8 +241,7 @@ evalS (Node (If e b1 b2) _) = do
     VBool True  -> evalB b1
     VBool False -> evalB b2
     VInt  _     -> throwError (5, "If condition must eval to bool")
-  _ <- popContext
-  return ()
+  popSubContext
 evalS (Node (For vs cond iter ss) loc) = do
   pushSubContext
   mapM_ (\(Vdecl x e) -> do
@@ -235,8 +250,7 @@ evalS (Node (For vs cond iter ss) loc) = do
   let cond' = fromMaybe (Node (CBool True) loc) cond
   let iter' = fromMaybe (Node (Nop) loc) iter
   evalS $ Node (While cond' (iter' : ss)) loc
-  _ <- popContext
-  return ()
+  popSubContext
 evalS w@(Node (While e ss) _) = do
   v <- evalE e
   pushSubContext
@@ -244,8 +258,7 @@ evalS w@(Node (While e ss) _) = do
     VBool True  -> evalB (ss ++ [w])
     VBool False -> return ()
     VInt  _     -> throwError (3, "Loop condition must eval to bool")
-  _ <- popContext
-  return ()
+  popSubContext
 evalS (Node Nop _) = return ()
 
 -- | Evaluate a block
@@ -261,7 +274,7 @@ executeBlock b gCtxt = runState (runExceptT $ evalB b) gCtxt
 executeProg :: Id -> Prog -> (Either (Int, String) (), GlobalContext)
 executeProg entry prog =
   let entryF = find (\(Gfdecl (Node (Fdecl _ fname _ _) _)) -> fname == entry) prog
-      gCtxt = gCtxtFromProg prog in
+      gCtxt = gCtxtFromProg entry prog in
   case entryF of
     Just (Gfdecl (Node (Fdecl _ _ [] b) _)) -> executeBlock b gCtxt
     Just _ -> (Left (6, "Entry function must not take in any arguments"), gCtxt)
@@ -295,4 +308,4 @@ run entry prog = do
 
 display :: Show a => (Either (Int, String) a) -> String
 display (Left (_, v))  = "Uncaught exception: " ++ v
-display (Right v) = "Result: " ++ show v
+display (Right v) = "" --Result: " ++ show v
