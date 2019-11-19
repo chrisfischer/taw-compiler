@@ -33,11 +33,14 @@ parseAllFiles :: String -> IO ()
 parseAllFiles dir =
   do names <- getDirectoryContents dir
      let properNames = filter (`notElem` [".", ".."]) names
-     paths <- forM properNames $ \name -> parseFile (dir ++ "/" ++ name)
+     paths <- forM properNames $ \name -> print name >> parseFile (dir ++ "/" ++ name)
      return ()
 
 parseTawFiles :: IO ()
 parseTawFiles = parseAllFiles "./tawprogs"
+
+parseTawFile :: String -> IO ()
+parseTawFile name = parseFile $ "./tawprogs/" ++ name
 
 -- Ast.Node data type utilities
 
@@ -174,9 +177,17 @@ fdecl =
      b <- braces block
      return $ Ast.Fdecl rty fname as b
 
+vdecl :: Parser Ast.Vdecl
+vdecl =
+  do reserved "var"
+     lhs <- identifier
+     reservedOp "="
+     rhs <- Parser.exp
+     return $ Ast.Vdecl lhs rhs 
+
 -- fdecl helper parsers
 args :: Parser [(Ty, Id)]
-args = sepBy1 arg comma
+args = sepEndBy arg comma
 
 arg :: Parser (Ty, Id)
 arg = do t <- ty
@@ -202,8 +213,7 @@ retty = RetVal <$> ty
 -----------------------------
 
 block :: Parser Block
-block = sepBy1 (Ast.Node <$> stmt) semi >>= \l -> return $ (\x -> x 0) <$> l
--- TODO: clean this up
+block = many (node <$> stmt)
 
 stmt :: Parser Stmt
 stmt =   retStmt
@@ -222,15 +232,7 @@ assnStmt = do lhs <- identifier
               return $ Ast.Assn (node $ Ast.Id lhs) rhs
 
 declStmt :: Parser Stmt
-declStmt = Ast.Decl <$> vdecl
-
-vdecl :: Parser Ast.Vdecl
-vdecl =
-  do reserved "var"
-     lhs <- identifier
-     reservedOp "="
-     rhs <- Parser.exp
-     return $ Ast.Vdecl lhs rhs 
+declStmt = Ast.Decl <$> vdecl <* semi
 
 retStmt :: Parser Stmt
 retStmt = reserved "return" >> Ast.Ret <$> Parser.exp <* semi
@@ -248,14 +250,14 @@ forStmt :: Parser Stmt
 forStmt =
   do reserved "for"
      char '('
-     vars  <- sepBy1 vdecl comma
+     vars  <- sepEndBy vdecl comma
      char ';'
-     cond  <- Just <$> Parser.exp
+     cond  <- Parser.exp
      char ';'
-     s     <- Just . node <$> Parser.stmt
+     s     <- node <$> Parser.stmt
      char ')'
      blck  <- braces block
-     return $ Ast.For vars cond s blck
+     return $ Ast.For vars (Just cond) (Just s) blck
 -- TODO account for missing forms (i.e. Nothing)
 
 whileStmt :: Parser Stmt
