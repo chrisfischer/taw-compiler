@@ -7,6 +7,7 @@ import Text.ParserCombinators.Parsec
 import Control.Monad
 import Ast
 
+import Text.Parsec.Combinator
 import System.Directory (doesDirectoryExist, getDirectoryContents)
 
 
@@ -28,6 +29,11 @@ parseFile :: FilePath -> IO ()
 parseFile name =
   do s <- readFile name
      parseString s 
+
+parseFileD :: FilePath -> IO ()
+parseFileD name =
+  do s <- readFile $ "./tawprogs/" ++ name
+     parseTest (parserTraced "langParser" langParser) s
 
 parseAllFiles :: String -> IO ()
 parseAllFiles dir =
@@ -99,6 +105,8 @@ integer    = Token.integer    lexer
 semi       = Token.semi       lexer
 comma      = Token.comma      lexer
 whiteSpace = Token.whiteSpace lexer
+openParen  = Token.symbol     lexer "("
+closeParen = Token.symbol     lexer ")"
 
 -- TODO: >>> needs its own constructor
 -- TODO: our Ast has mod
@@ -249,13 +257,13 @@ ifStmt =
 forStmt :: Parser Stmt
 forStmt =
   do reserved "for"
-     char '('
+     openParen
      vars  <- sepEndBy vdecl comma
-     char ';'
+     semi
      cond  <- Parser.exp
-     char ';'
+     semi
      s     <- node <$> Parser.stmt
-     char ')'
+     closeParen
      blck  <- braces block
      return $ Ast.For vars (Just cond) (Just s) blck
 -- TODO account for missing forms (i.e. Nothing)
