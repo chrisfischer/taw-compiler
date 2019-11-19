@@ -18,7 +18,8 @@ data Rty =
   deriving (Show, Eq)
 
 data Retty =
-  RetVal Ty
+    RetVal Ty
+  | RetVoid
   deriving (Show, Eq)
 
 data ValueTy =
