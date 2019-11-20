@@ -9,7 +9,7 @@ type Loc = Int
 data Ty =
     TBool
   | TInt
-  deriving (Show, Eq)
+  deriving (Show, Eq, Enum)
 
 data Rty =
   RFun [Ty] Retty
