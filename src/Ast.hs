@@ -1,7 +1,5 @@
 module Ast where
 
-import Data.Int
-
 data Node a = Node { elt :: a, loc :: Loc } deriving (Show, Eq)
 
 type Id = String
@@ -68,7 +66,6 @@ data Stmt =
     Assn (Node Exp) (Node Exp)
   | Decl Vdecl
   | Ret (Node Exp)
-  -- | SCall (Node Exp) [Node Exp]
   | If (Node Exp) Block Block
   | For [Vdecl] (Maybe (Node Exp)) (Maybe (Node Stmt)) Block
   | While (Node Exp) Block
@@ -84,8 +81,16 @@ data Fdecl = Fdecl {
   , body :: Block
   } deriving (Show, Eq)
 
-newtype Decl =
-  Gfdecl (Node Fdecl)
+-- | External function declaration
+data Fext = Fext {
+    extRetty :: Retty
+  , extFname :: Id
+  , extArgs :: [(Ty, Id)]
+  } deriving (Show, Eq)
+
+data Decl =
+    Gfdecl (Node Fdecl)
+  | Gfext (Node Fext)
   deriving (Show, Eq)
 
 type Prog = [Decl]

@@ -38,10 +38,16 @@ emptyFunctionContext fn = FunctionContext fn Nothing Map.empty Nothing
 emptyGlobalContext entry = GlobalContext (emptyFunctionContext entry) Map.empty
 
 -- | Initializes context with global decls and sets functions
-gCtxtFromProg :: Id -> Prog -> GlobalContext
+gCtxtFromProg :: Id -> Prog -> Either (Int, String) GlobalContext
 gCtxtFromProg entry prog =
-  let fs = map (\(Gfdecl f@(Node (Fdecl _ fname _ _) _)) -> (fname, f)) prog in
-  (emptyGlobalContext entry) { fdecls = Map.fromList fs }
+  fmap (\fs -> (emptyGlobalContext entry) { fdecls = Map.fromList fs }) $
+    unwrap prog
+  where
+    unwrap :: Prog -> Either (Int, String) [(Id, Node Fdecl)]
+    unwrap [] = Right []
+    unwrap ((Gfdecl f@(Node (Fdecl _ fname _ _) _)):xs) =
+      fmap ((fname, f):) $ unwrap xs
+    unwrap _ = Left (12, "Externals are not supported in the interpreter")
 
 -- Helper functions
 
@@ -99,8 +105,8 @@ setRetValue :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
                ValueTy -> m ()
 setRetValue v = do
   curr <- gets currCtxt
-  Node (Fdecl (RetVal retty) _ _ _) _ <- lookUpFdecl (fnm curr)
-  validateRetTy v retty
+  -- Node (Fdecl (RetVal retty) _ _ _) _ <- lookUpFdecl (fnm curr)
+  -- validateRetTy v retty
   let curr' = curr { retVal = Just v }
   modify $ \s -> s { currCtxt = curr' }
   where
@@ -133,15 +139,17 @@ popSubContext = do
 -- | Sets the current context as the first parent context with a different
 -- function name
 popContext :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
-              m (Maybe ValueTy)
+              m (ValueTy)
 popContext = do
   curr <- gets currCtxt
   let f = fnm curr
-  case findDifferentParent f curr of
-    Just c' -> do
-      modify $ \s -> s { currCtxt = c' }
-      return $ retVal curr
-    Nothing -> throwError (11, "Cannot pop top level context")
+  case retVal curr of
+    Just rv -> case findDifferentParent f curr of
+      Just c' -> do
+        modify $ \s -> s { currCtxt = c' }
+        return rv
+      Nothing -> throwError (11, "Cannot pop top level context")
+    Nothing -> throwError (10, "Function did not return a value")
   where
     findDifferentParent :: Id -> FunctionContext -> Maybe FunctionContext
     findDifferentParent id c =
@@ -172,10 +180,7 @@ evalE (Node (Call ef args) _) = do
       pushContext id
       mapM_ (\(id, v) -> assignValue id v) (zip ids argvals)
       evalB body
-      retVal <- popContext
-      case retVal of
-        Just rv -> return rv
-        Nothing -> throwError (10, "Function did not return a value")
+      popContext
     _ -> throwError (3, "Cannot call a non-function pointer")
   where
     -- | Verify that the given types match the specified types
@@ -271,14 +276,23 @@ executeBlock :: Block ->
            (Either (Int, String) (), GlobalContext)
 executeBlock b gCtxt = runState (runExceptT $ evalB b) gCtxt
 
-executeProg :: Id -> Prog -> (Either (Int, String) (), GlobalContext)
+executeProg :: Id -> Prog -> Either (Int, String) ValueTy
 executeProg entry prog =
-  let entryF = find (\(Gfdecl (Node (Fdecl _ fname _ _) _)) -> fname == entry) prog
+  let entryF = find (\(Gfdecl (Node (Fdecl _ fname _ _) _)) ->
+                        fname == entry) prog
       gCtxt = gCtxtFromProg entry prog in
-  case entryF of
-    Just (Gfdecl (Node (Fdecl _ _ [] b) _)) -> executeBlock b gCtxt
-    Just _ -> (Left (6, "Entry function must not take in any arguments"), gCtxt)
-    Nothing -> (Left (7, "Could not find entry function"), gCtxt)
+  case gCtxt of
+    Right startCtxt ->
+      case entryF of
+        Just (Gfdecl (Node (Fdecl _ _ [] b) _)) ->
+          let (res, finalCtxt) = executeBlock b startCtxt in
+          case (res, retVal $ currCtxt $ finalCtxt) of
+            (Left e, _) -> Left e
+            (Right _, Just r) -> Right r
+            (Right _, Nothing) -> Left (10, "Function did not return a value")
+        Just _ -> Left (6, "Entry function must not take in any arguments")
+        Nothing -> Left (7, "Could not find entry function")
+    Left e -> Left e
 
 
 idd x = Node (Id x) 0
@@ -301,11 +315,9 @@ testProg = [
 
 run :: Id -> Prog -> IO ()
 run entry prog = do
-  let (r, s) = executeProg entry prog
+  let r = executeProg entry prog
   putStrLn (display r)
-  putStr "Result: "
-  putStrLn (show $ retVal $ currCtxt s)
 
 display :: Show a => (Either (Int, String) a) -> String
-display (Left (_, v))  = "Uncaught exception: " ++ v
-display (Right v) = "" --Result: " ++ show v
+display (Left (_, v))  = "Exception: " ++ v
+display (Right v) = "Result: " ++ show v
