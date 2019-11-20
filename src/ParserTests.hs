@@ -6,6 +6,31 @@ import Control.Monad
 import Test.QuickCheck
 import Test.QuickCheck.Gen
 
+import Interpreter (evalBop)
+-----------------------------
+-- HARNESS ------------------
+-----------------------------
+
+-----------------------------
+-- PROPERTIES ---------------
+-----------------------------
+
+-- Binop
+isBinop :: Exp -> Bool
+isBinop Bop{} = True
+isBinop _     = False
+
+prop_binop_comm :: Property
+prop_binop_comm = forAll genExp $ \exp ->
+  isBinop exp ==>
+    let (Bop binop e1 e2) = exp in
+    evalBop exp == evalBop (Bop binop e2 e1)
+
+
+-----------------------------
+-- GENERATORS ---------------
+-----------------------------
+
 genFromEnum :: Enum a => a -> Gen a
 genFromEnum e = elements $ enumFrom e
 
@@ -20,8 +45,8 @@ genTy = genFromEnum TBool
 
 genRetty :: Gen Retty
 genRetty = 
-  oneof [RetVal <$> genTy  , 
-         elements [RetVoid]] -- TODO: what's the better way?
+  oneof [RetVal <$> genTy, 
+         return RetVoid  ] 
 
 genValueTy :: Gen ValueTy
 genValueTy =
@@ -32,7 +57,7 @@ genValueTy =
 genMaybeNodeExp :: Gen (Maybe (Node Exp))
 genMaybeNodeExp =
   oneof [Just <$> genNodeExp,
-         elements [Nothing] ] -- TODO: here, too
+         return Nothing     ]
 
 genNodeExp :: Gen (Node Exp)
 genNodeExp = node <$> genExp
@@ -63,7 +88,7 @@ genBlock = listOf genNodeStmt
 genMaybeNodeStmt :: Gen (Maybe (Node Stmt))
 genMaybeNodeStmt =
   oneof [Just <$> genNodeStmt,
-         elements [Nothing]  ] -- TODO: here, too
+         return Nothing      ]
 
 genNodeStmt :: Gen (Node Stmt)
 genNodeStmt = node <$> genStmt
