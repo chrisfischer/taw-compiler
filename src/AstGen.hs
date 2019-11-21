@@ -1,31 +1,10 @@
-module ParserTest where
+module AstGen where
 
 import Ast
 import Parser (node)
 import Control.Monad
 import Test.QuickCheck
 import Test.QuickCheck.Gen
-
-import Interpreter (evalBop)
------------------------------
--- HARNESS ------------------
------------------------------
-
------------------------------
--- PROPERTIES ---------------
------------------------------
-
--- Binop
-isBinop :: Exp -> Bool
-isBinop Bop{} = True
-isBinop _     = False
-
-prop_binop_comm :: Property
-prop_binop_comm = forAll genExp $ \exp ->
-  isBinop exp ==>
-    let (Bop binop e1 e2) = exp in
-    evalBop exp == evalBop (Bop binop e2 e1)
-
 
 -----------------------------
 -- GENERATORS ---------------
