@@ -42,6 +42,7 @@ executable interpreter_test
     , bytestring           >= 0.10
     , QuickCheck           >= 2.13
 
+
 executable comparison_test
   default-language:    Haskell2010
   main-is:             ComparisonTest.hs
@@ -61,5 +62,25 @@ executable comparison_test
     , containers           >= 0.4
     , bytestring           >= 0.10
     , QuickCheck           >= 2.13
-    , directory            >= 1.3.3.0 
+    , directory            >= 1.3.3.0
+
+
+executable frontend_test
+  default-language:    Haskell2010
+  main-is:             Frontend.hs
+  hs-source-dirs:      src
+  other-modules:
+    LLVMGen
+    Ast
+  build-depends:
+      base                 >= 4.7 && <5
+    , haskeline            >= 0.7.5.0
+    , llvm-hs              >= 9.0.1
+    , llvm-hs-pure         >= 9.0.0
+    , parsec               >= 3.1
+    , mtl                  >= 2.1.3
+    , transformers         >= 0.3.0.0 && < 0.6
+    , containers           >= 0.4
+    , bytestring           >= 0.10
+    , QuickCheck           >= 2.13
 
