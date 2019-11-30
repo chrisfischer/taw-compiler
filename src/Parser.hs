@@ -28,7 +28,7 @@ parseString = parseTest langParser
 parseFile :: FilePath -> IO ()
 parseFile name =
   do s <- readFile name
-     parseString s 
+     parseString s
 
 parseFileD :: FilePath -> IO ()
 parseFileD name =
@@ -50,23 +50,18 @@ parseTawFile name = parseFile $ "./tawprogs/" ++ name
 
 -- Ast.Node data type utilities
 
--- | converts an a to an Ast.Node a by using the a for
---   the element and 0 as an arbitrary loc
-node :: a -> Ast.Node a
-node = (\x -> x 0) . Ast.Node
-
 -- | converts an m of a to a list of Ast.Node a
 nodeMap :: Monad m => m a -> m (Ast.Node a)
-nodeMap = (node <$>)
+nodeMap = (noLoc <$>)
 
 -- | takes a constructor and its two arguments and returns a node
 --   of the result of applying the arguments to the constructor
-nodeWrap2 c x y = node (c x y)
+nodeWrap2 c x y = noLoc (c x y)
 
 -----------------------------
 -- PARSEC DEFS --------------
 -----------------------------
--- modified from: 
+-- modified from:
 -- https://wiki.haskell.org/Parsing_a_simple_imperative_language
 
 languageDef =
@@ -111,7 +106,7 @@ closeParen = Token.symbol     lexer ")"
 -- TODO: >>> needs its own constructor
 -- TODO: our Ast has mod
 -- TODO: OAT had bitflip - do we want that?
-expOperators = 
+expOperators =
   [ [Prefix (reservedOp "-"   >> return (nodeMap   (Uop Neg )))          ]
   , [Prefix (reservedOp "!"   >> return (nodeMap   (Uop Lognot )))       ]
   , [Infix  (reservedOp "*"   >> return (nodeWrap2 (Bop Mul ))) AssocLeft,
@@ -123,7 +118,7 @@ expOperators =
      Infix  (reservedOp ">>>" >> return (nodeWrap2 (Bop Shr ))) AssocLeft]
   , [Infix  (reservedOp "<"   >> return (nodeWrap2 (Bop Lt  ))) AssocLeft,
      Infix  (reservedOp "<="  >> return (nodeWrap2 (Bop Lte ))) AssocLeft,
-     Infix  (reservedOp ">"   >> return (nodeWrap2 (Bop Gt  ))) AssocLeft, 
+     Infix  (reservedOp ">"   >> return (nodeWrap2 (Bop Gt  ))) AssocLeft,
      Infix  (reservedOp ">"   >> return (nodeWrap2 (Bop Gte ))) AssocLeft]
   , [Infix  (reservedOp "=="  >> return (nodeWrap2 (Bop Eq  ))) AssocLeft,
      Infix  (reservedOp "!="  >> return (nodeWrap2 (Bop Neq ))) AssocLeft]
@@ -175,10 +170,10 @@ sequenceOfDecl :: Parser [Decl]
 sequenceOfDecl = many decl
 
 decl :: Parser Decl
-decl = Ast.Gfdecl . node <$> fdecl
+decl = Ast.Gfdecl . noLoc <$> fdecl
 
 fdecl :: Parser Fdecl
-fdecl = 
+fdecl =
   do rty <- Parser.retty
      fname <- identifier
      as <- parens Parser.args
@@ -191,7 +186,7 @@ vdecl =
      lhs <- identifier
      reservedOp "="
      rhs <- Parser.exp
-     return $ Ast.Vdecl lhs rhs 
+     return $ Ast.Vdecl lhs rhs
 
 -- fdecl helper parsers
 args :: Parser [(Ty, Id)]
@@ -200,7 +195,7 @@ args = sepEndBy arg comma
 arg :: Parser (Ty, Id)
 arg = do t <- ty
          id <- identifier
-         return (t, id) 
+         return (t, id)
 
 
 -----------------------------
@@ -221,7 +216,7 @@ retty = RetVal <$> ty
 -----------------------------
 
 block :: Parser Block
-block = many (node <$> stmt)
+block = many (noLoc <$> stmt)
 
 stmt :: Parser Stmt
 stmt =   retStmt
@@ -237,7 +232,7 @@ assnStmt = do lhs <- identifier
               reservedOp "="
               rhs <- Parser.exp
               semi
-              return $ Ast.Assn (node $ Ast.Id lhs) rhs
+              return $ Ast.Assn (noLoc $ Ast.Id lhs) rhs
 
 declStmt :: Parser Stmt
 declStmt = Ast.Decl <$> vdecl <* semi
@@ -246,7 +241,7 @@ retStmt :: Parser Stmt
 retStmt = reserved "return" >> Ast.Ret <$> Parser.exp <* semi
 
 ifStmt :: Parser Stmt
-ifStmt = 
+ifStmt =
   do reserved "if"
      condExp <- parens Parser.exp
      ifBlock <- braces block
@@ -262,14 +257,14 @@ forStmt =
      semi
      cond  <- Parser.exp
      semi
-     s     <- node <$> Parser.stmt
+     s     <- noLoc <$> Parser.stmt
      closeParen
      blck  <- braces block
      return $ Ast.For vars (Just cond) (Just s) blck
 -- TODO account for missing forms (i.e. Nothing)
 
 whileStmt :: Parser Stmt
-whileStmt = 
+whileStmt =
   do reserved "while"
      condExp <- parens Parser.exp
      blck    <- braces block
