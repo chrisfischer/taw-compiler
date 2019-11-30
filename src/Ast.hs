@@ -25,12 +25,6 @@ data Retty =
   | RetVoid
   deriving (Show, Eq)
 
-data ValueTy =
-    VBool Bool
-  | VInt Int
-  | VFun Id
-  deriving (Show, Eq)
-
 data Unop =
     Neg
   | Lognot

@@ -72,7 +72,6 @@ executable frontend_test
   other-modules:
     LLVMGen
     Ast
-    Interpreter
     Tests
   build-depends:
       base                 >= 4.7 && <5

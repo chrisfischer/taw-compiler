@@ -13,6 +13,11 @@ import Control.Monad (liftM, liftM2)
 import Control.Monad.State
 import Control.Monad.Except (MonadError(..), ExceptT, runExceptT)
 
+data ValueTy =
+    VBool Bool
+  | VInt Int
+  | VFun Id
+  deriving (Show, Eq)
 
 data GlobalContext
   = GlobalContext {
@@ -108,14 +113,15 @@ setRetValue :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
 setRetValue v = do
   curr <- gets currCtxt
   -- Node (Fdecl (RetVal retty) _ _ _) _ <- lookUpFdecl (fnm curr)
-  -- validateRetTy v retty
+  -- verifyRetTy v retty
   let curr' = curr { retVal = Just v }
   modify $ \s -> s { currCtxt = curr' }
   where
-    validateRetTy :: (MonadError (Int, String) m) => ValueTy -> Ty -> m ()
-    validateRetTy (VInt _) TInt = return ()
-    validateRetTy (VBool _) TBool = return ()
-    validateRetTy _ _ = throwError (9, "Ret type mismatch")
+    verifyRetTy :: (MonadError (Int, String) m) => ValueTy -> Ty -> m ()
+    verifyRetTy (VInt _) TInt = return ()
+    verifyRetTy (VBool _) TBool = return ()
+    verifyRetTy (VFun _) (TRef (RFun _ _)) = return ()
+    verifyRetTy _ _ = throwError (9, "Ret type mismatch")
 
 -- | Creates a new context with the given name and the current as its parent
 pushContext :: MonadState GlobalContext m => Id -> m ()
@@ -180,7 +186,7 @@ evalE (Node (Call ef args) _) = do
       verifyArgTypes argvals (Prelude.map fst tyargs)
       let ids = map snd tyargs
       pushContext id
-      forM_ (zip ids argvals) $ \(id, v) -> assignValue id v
+      forM_ (zip ids argvals) $ \(id, v) -> declValue id v
       evalB body
       popContext
     _ -> throwError (3, "Cannot call a non-function pointer")
@@ -188,6 +194,8 @@ evalE (Node (Call ef args) _) = do
     -- | Verify that the given types match the specified types
     verifyArgTypes :: (MonadError (Int, String) m) => [ValueTy] -> [Ty] -> m ()
     verifyArgTypes ((VInt _):xs) (TInt:ys) = verifyArgTypes xs ys
+    verifyArgTypes ((VBool _):xs) (TBool:ys) = verifyArgTypes xs ys
+    verifyArgTypes ((VFun _):xs) ((TRef (RFun _ _)):ys) = verifyArgTypes xs ys
     verifyArgTypes [] [] = return ()
     verifyArgTypes _ _ = throwError (9, "Function call type mismatch")
 
@@ -297,22 +305,44 @@ executeProg entry prog =
     Left e -> Left e
 
 
+-- idd x = noLoc $ Id x
+
+-- testFDecl2 = Fdecl (RetVal TInt) "add" []
+--   [ noLoc $ Decl $ Vdecl "x" $ noLoc $ CInt 42
+--   , noLoc $ Decl $ Vdecl "y" $ noLoc $ CInt 10
+--   , noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
+--   , noLoc $ Ret $ noLoc (Id "z") ]
+
+-- testFDecl = Fdecl (RetVal TInt) "main" []
+--   [ noLoc $ Decl $ Vdecl "x" $ noLoc $ CInt 42
+--   , noLoc $ Decl $ Vdecl "y" $ noLoc $ Call (idd "add") []
+--   , noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
+--   , noLoc $ Ret $ noLoc (Id "z") ]
+
+-- testProg = [
+--     Gfdecl $ noLoc testFDecl2
+--   , Gfdecl $ noLoc testFDecl ]
+
 idd x = noLoc $ Id x
 
-testFDecl2 = Fdecl (RetVal TInt) "add" []
-  [ noLoc $ Decl $ Vdecl "x" $ noLoc $ CInt 42
-  , noLoc $ Decl $ Vdecl "y" $ noLoc $ CInt 10
-  , noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
+testFDecl2 = Fdecl (RetVal TInt) "add" [(TInt, "x"), (TInt, "y")]
+  [ noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
+  , noLoc $ Ret $ noLoc (Id "z") ]
+
+testFDecl3 = Fdecl (RetVal TInt) "do" [(TRef (RFun [TInt, TInt] (RetVal TInt)), "f1"), (TInt, "x"), (TInt, "y")]
+  [ noLoc $ Decl $ Vdecl "z" $ noLoc $ Call (idd "f1") [(idd "x"), (idd "y")]
   , noLoc $ Ret $ noLoc (Id "z") ]
 
 testFDecl = Fdecl (RetVal TInt) "main" []
   [ noLoc $ Decl $ Vdecl "x" $ noLoc $ CInt 42
-  , noLoc $ Decl $ Vdecl "y" $ noLoc $ Call (idd "add") []
+  , noLoc $ Decl $ Vdecl "f" $ noLoc $ Id "add"
+  , noLoc $ Decl $ Vdecl "y" $ noLoc $ Call (idd "do") [(idd "f"), (idd "x"), (idd "x")]
   , noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
-  , noLoc $ Ret $ noLoc (Id "z") ]
+  , noLoc $ Ret $ idd "z" ]
 
 testProg = [
     Gfdecl $ noLoc testFDecl2
+  , Gfdecl $ noLoc testFDecl3
   , Gfdecl $ noLoc testFDecl ]
 
 
