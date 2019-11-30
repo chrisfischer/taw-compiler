@@ -180,7 +180,7 @@ evalE (Node (Call ef args) _) = do
       verifyArgTypes argvals (Prelude.map fst tyargs)
       let ids = map snd tyargs
       pushContext id
-      mapM_ (\(id, v) -> assignValue id v) (zip ids argvals)
+      forM_ (zip ids argvals) $ \(id, v) -> assignValue id v
       evalB body
       popContext
     _ -> throwError (3, "Cannot call a non-function pointer")
@@ -251,9 +251,9 @@ evalS (Node (If e b1 b2) _) = do
   popSubContext
 evalS (Node (For vs cond iter ss) loc) = do
   pushSubContext
-  mapM_ (\(Vdecl x e) -> do
+  forM_ vs $ \(Vdecl x e) -> do
     e' <- evalE e
-    assignValue x e') vs
+    assignValue x e'
   let cond' = fromMaybe (Node (CBool True) loc) cond
   let iter' = fromMaybe (Node (Nop) loc) iter
   evalS $ Node (While cond' (iter' : ss)) loc
@@ -297,22 +297,23 @@ executeProg entry prog =
     Left e -> Left e
 
 
-idd x = Node (Id x) 0
+idd x = noLoc $ Id x
+
 testFDecl2 = Fdecl (RetVal TInt) "add" []
-  [ Node (Decl (Vdecl "x" (Node (CInt 42) 0 ))) 0
-  , Node (Decl (Vdecl "y" (Node (CInt 10) 0 ))) 0
-  , Node (Decl (Vdecl "z" (Node (Bop Add (idd "x") (idd "y")) 0 ))) 0
-  , Node (Ret (Node (Id "z") 0)) 0 ]
+  [ noLoc $ Decl $ Vdecl "x" $ noLoc $ CInt 42
+  , noLoc $ Decl $ Vdecl "y" $ noLoc $ CInt 10
+  , noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
+  , noLoc $ Ret $ noLoc (Id "z") ]
 
 testFDecl = Fdecl (RetVal TInt) "main" []
-  [ Node (Decl (Vdecl "x" (Node (CInt 42) 0 ))) 0
-  , Node (Decl (Vdecl "y" (Node (Call (idd "add") []) 0 ))) 0
-  , Node (Decl (Vdecl "z" (Node (Bop Add (idd "x") (idd "y")) 0 ))) 0
-  , Node (Ret (Node (Id "z") 0)) 0 ]
+  [ noLoc $ Decl $ Vdecl "x" $ noLoc $ CInt 42
+  , noLoc $ Decl $ Vdecl "y" $ noLoc $ Call (idd "add") []
+  , noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
+  , noLoc $ Ret $ noLoc (Id "z") ]
 
 testProg = [
-    Gfdecl (Node testFDecl2 0)
-  , Gfdecl (Node testFDecl 0) ]
+    Gfdecl $ noLoc testFDecl2
+  , Gfdecl $ noLoc testFDecl ]
 
 
 run :: Id -> Prog -> IO ()
