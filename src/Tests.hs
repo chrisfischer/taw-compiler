@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 
-module Main where
+module Tests where
 
 import Foreign.Ptr
 import Data.IORef
