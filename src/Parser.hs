@@ -102,6 +102,7 @@ comma      = Token.comma      lexer
 whiteSpace = Token.whiteSpace lexer
 openParen  = Token.symbol     lexer "("
 closeParen = Token.symbol     lexer ")"
+arrow      = Token.symbol     lexer "->"
 
 -- TODO: >>> needs its own constructor
 -- TODO: our Ast has mod
@@ -132,10 +133,10 @@ exp :: Parser (Node Exp)
 exp = buildExpressionParser expOperators expTerm
 
 expTerm =   parens Parser.exp
-        <|> nodeMap idExp
         <|> nodeMap boolExp
         <|> nodeMap intExp
-        <|> nodeMap callExp
+        <|> nodeMap (try callExp) 
+        <|> nodeMap idExp
 
 
 -----------------------------
@@ -154,9 +155,9 @@ idExp = Ast.Id <$> identifier
 
 callExp :: Parser Exp
 callExp =
-  do idEx <- Parser.exp
-     argExs <- sepBy1 Parser.exp comma
-     return $ Ast.Call idEx argExs
+  do idEx <- idExp
+     argExs <- parens $ sepEndBy Parser.exp comma
+     return $ Ast.Call (noLoc idEx) argExs
 
 
 -----------------------------
@@ -180,7 +181,7 @@ fdecl =
      b <- braces block
      return $ Ast.Fdecl rty fname as b
 
-vdecl :: Parser Ast.Vdecl
+vdecl :: Parser Vdecl
 vdecl =
   do reserved "var"
      lhs <- identifier
@@ -205,11 +206,17 @@ arg = do t <- ty
 ty :: Parser Ty
 ty =   (reserved "int"  >> return Ast.TInt)
    <|> (reserved "bool" >> return Ast.TBool)
+   <|> TRef <$> rty
+
+rty :: Parser Rty
+rty = do tys <- parens $ sepEndBy ty comma
+         arrow
+         r <- Parser.retty
+         return $ RFun tys r
 
 retty :: Parser Retty
-retty = RetVal <$> ty
--- TODO: account for void returns (here and AST)
-
+retty =   (reserved "void" >> return Ast.RetVoid)
+      <|> RetVal <$> ty
 
 -----------------------------
 -- STATEMENTS ---------------
