@@ -16,6 +16,7 @@ import LLVM.Prelude
 import LLVM.AST.Global
 
 import qualified LLVM.AST as AST
+import qualified LLVM.AST.Type as T
 import qualified LLVM.AST.Linkage as L
 import qualified LLVM.AST.Constant as C
 import qualified LLVM.AST.Float as F
@@ -87,6 +88,8 @@ data FunctionGenState
   , count :: Word
     -- Map from names to number of times it has been used
   , names :: Map.Map ShortByteString Int
+    -- Map from function names to their compiled types
+  , ftyCtxt :: Map.Map ShortByteString AST.Type
   } deriving Show
 
 data BlockState
@@ -107,17 +110,17 @@ newtype FunctionGen a =
   FunctionGen { runFunctionGen :: State FunctionGenState a}
   deriving (Functor, Applicative, Monad, MonadState FunctionGenState )
 
-  -- | Extract the generated function out of its state monad
+-- | Extract the generated function out of its state monad
 execFunctionGen :: FunctionGen a -> FunctionGenState
 execFunctionGen m = execState (runFunctionGen m) emptyFunctionGen where
   -- | Create a new FunctionGen with the current block set as the entry block
   emptyFunctionGen :: FunctionGenState
   emptyFunctionGen = FunctionGenState
-    entryBlockName Map.empty Map.empty 1 0 Map.empty
+    (AST.Name entryBlockName) Map.empty Map.empty 1 0 Map.empty Map.empty
 
 -- | Name of the first block in all functions
-entryBlockName :: AST.Name
-entryBlockName = AST.Name "entry"
+entryBlockName :: ShortByteString
+entryBlockName = "entry"
 
 -- | Transform a FunctionState into
 createBlocks :: FunctionGenState -> [BasicBlock]
@@ -139,7 +142,7 @@ emptyBlock i = BlockState i [] Nothing
 addBlock :: ShortByteString -> FunctionGen AST.Name
 addBlock blockName = do
   bls <- gets blocks
-  count  <- gets blockCount
+  count <- gets blockCount
   name' <- freshName blockName
   modify $ \s -> s { blocks = Map.insert (AST.Name name') (emptyBlock count) bls
                    , blockCount = count + 1
@@ -147,10 +150,9 @@ addBlock blockName = do
   return $ AST.Name name'
 
 -- | Sets the current block name to the given name
-setCurrentBlock :: AST.Name -> FunctionGen AST.Name
+setCurrentBlock :: AST.Name -> FunctionGen ()
 setCurrentBlock blockName = do
   modify $ \s -> s { currentBlock = blockName }
-  return blockName
 
 -- | Sets the contents of the current block to the given state
 modifyBlock :: BlockState -> FunctionGen ()
@@ -200,19 +202,29 @@ instr ty ins = do
   modifyBlock (block { stack = (ref AST.:= ins) : insns } )
   return $ local ty ref
 
+-- | For store
+voidInstr :: AST.Instruction -> FunctionGen ()
+voidInstr ins = do
+  block <- getCurrentBlock
+  let insns = stack block
+  modifyBlock (block { stack = (AST.Do ins) : insns } )
+
 -- | Set the terminator for the current block
-terminator :: AST.Named AST.Terminator -> FunctionGen (AST.Named AST.Terminator)
+terminator :: AST.Named AST.Terminator -> FunctionGen ()
 terminator term = do
   block <- getCurrentBlock
   modifyBlock (block { term = Just term })
-  return term
+
+setFtyCtxt :: Map.Map ShortByteString AST.Type -> FunctionGen()
+setFtyCtxt ctxt = do
+  modify $ \s -> s { ftyCtxt = ctxt }
 
 -- SYMBOL TABLE
 
 -- | Assign a name to the given LLVM operand
 assign :: ShortByteString -> AST.Operand -> FunctionGen ()
-assign var x = modify $ \s ->
-  s { symbleTable = Map.insert var x (symbleTable s) }
+assign name x = modify $ \s ->
+  s { symbleTable = Map.insert name x (symbleTable s) }
 
 -- | Get the LLVM operand associated with the given string
 getVar :: ShortByteString -> FunctionGen AST.Operand
@@ -230,8 +242,13 @@ local = AST.LocalReference
 global :: AST.Type -> AST.Name -> C.Constant
 global = C.GlobalReference
 
-externf :: AST.Type -> AST.Name -> AST.Operand
-externf ty = AST.ConstantOperand . (C.GlobalReference ty)
+globalf :: ShortByteString -> FunctionGen AST.Operand
+globalf name = do
+  ctxt <- gets ftyCtxt
+  case Map.lookup name ctxt of
+    Just ty -> return $ AST.ConstantOperand $ C.GlobalReference (T.ptr ty) $ AST.Name name
+    Nothing -> error $ "Fucntion name " ++ show name ++ " not found"
+
 
 -- TYPES
 
@@ -253,6 +270,17 @@ boolean = AST.IntegerType booleanSize
 -- Variable numbers of arguments is not allowed
 functionPtr :: AST.Type -> [AST.Type] -> AST.Type
 functionPtr retty argtys = AST.FunctionType retty argtys False
+
+typeFromOperand :: AST.Operand -> AST.Type
+typeFromOperand (AST.LocalReference t@(AST.IntegerType 1) _) = t
+typeFromOperand (AST.LocalReference t@(AST.IntegerType 64) _) = t
+typeFromOperand (AST.LocalReference t@(AST.FloatingPointType AST.DoubleFP) _) =
+  t
+typeFromOperand (AST.LocalReference t@(AST.FunctionType _ _ _) _) = t
+typeFromOperand (AST.LocalReference _ _) = error "Unrecognized type"
+typeFromOperand (AST.ConstantOperand (C.Int 64 _)) = integer
+typeFromOperand (AST.ConstantOperand (C.Int 1 _)) = boolean
+typeFromOperand e = error $ "Can only get types for known types: " ++ show e
 
 -- CONSTANTS
 
@@ -343,6 +371,14 @@ imod a b = instr integer $ AST.SRem a b []
 ineg :: AST.Operand -> FunctionGen AST.Operand
 ineg a = instr integer $ AST.Sub False False (integerConst 0) a []
 
+-- | Boolean eq
+beq :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+beq a b = instr boolean $ AST.ICmp IP.EQ a b []
+
+-- | Boolean neq
+bneq :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
+bneq a b = instr boolean $ AST.ICmp IP.NE a b []
+
 -- | Boolean and
 band :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
 band a b = instr boolean $ AST.And a b []
@@ -370,23 +406,39 @@ alloca :: AST.Type -> FunctionGen AST.Operand
 alloca ty = instr ty $ AST.Alloca ty Nothing 0 []
 
 -- | Store the given value at the given pointer
-store :: AST.Type -> AST.Operand -> AST.Operand -> FunctionGen AST.Operand
-store ty val ptr = instr ty $ AST.Store False ptr val Nothing 0 []
+store :: AST.Operand -> AST.Operand -> FunctionGen ()
+store val ptr = voidInstr $ AST.Store False ptr val Nothing 0 []
 
 -- | Load value stored at the given pointer
-load :: AST.Type -> AST.Operand -> FunctionGen AST.Operand
-load ty ptr = instr ty $ AST.Load False ptr Nothing 0 []
+load :: AST.Operand -> FunctionGen AST.Operand
+load ptr = instr (typeFromOperand ptr) $ AST.Load False ptr Nothing 0 []
 
 -- CONTROL FLOW
 
 -- Branch
-br :: AST.Name -> FunctionGen (AST.Named AST.Terminator)
+br :: AST.Name -> FunctionGen ()
 br val = terminator $ AST.Do $ AST.Br val []
 
 -- Contiditonal branch
-cbr :: AST.Operand -> AST.Name -> AST.Name -> FunctionGen (AST.Named AST.Terminator)
+cbr :: AST.Operand -> AST.Name -> AST.Name -> FunctionGen ()
 cbr cond tr fl = terminator $ AST.Do $ AST.CondBr cond tr fl []
 
 -- Return
-ret :: AST.Operand -> FunctionGen (AST.Named AST.Terminator)
+ret :: AST.Operand -> FunctionGen ()
 ret val = terminator $ AST.Do $ AST.Ret (Just val) []
+
+
+-- FUNCTION TYPE EXTRACTION
+
+newtype FunctionTypeGen a =
+  FunctionTypeGen { runFunctionTypeGen :: State FunctionTypeContext a}
+  deriving (Functor, Applicative, Monad, MonadState FunctionTypeContext )
+
+type FunctionTypeContext = Map.Map ShortByteString AST.Type
+
+-- | Extract the generated function out of its state monad
+execFunctionTypeGen :: FunctionTypeGen a -> FunctionTypeContext
+execFunctionTypeGen m = execState (runFunctionTypeGen m) Map.empty
+
+setType :: ShortByteString -> AST.Type -> FunctionTypeGen ()
+setType id ty = modify $ \s -> Map.insert id ty s

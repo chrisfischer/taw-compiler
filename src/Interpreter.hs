@@ -1,8 +1,8 @@
-module Interpreter where
-
 {-# LANGUAGE FlexibleContexts #-}
 
-import Ast -- as Taw
+module Interpreter where
+
+import Ast
 
 import Data.Foldable (find)
 import Data.Maybe (fromMaybe)

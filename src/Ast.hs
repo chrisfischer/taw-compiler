@@ -2,6 +2,10 @@ module Ast where
 
 data Node a = Node { elt :: a, loc :: Loc } deriving (Show, Eq)
 
+-- | Helper method to create a Node with no location
+noLoc :: a -> Node a
+noLoc a = Node a 0
+
 type Id = String
 
 type Loc = Int
@@ -9,7 +13,8 @@ type Loc = Int
 data Ty =
     TBool
   | TInt
-  deriving (Show, Eq, Enum)
+  | TRef Rty
+  deriving (Show, Eq)
 
 data Rty =
   RFun [Ty] Retty
@@ -27,8 +32,8 @@ data ValueTy =
   deriving (Show, Eq)
 
 data Unop =
-   Neg
- | Lognot
+    Neg
+  | Lognot
   deriving (Show, Eq, Enum)
 
 data Binop =
