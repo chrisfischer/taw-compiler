@@ -1,7 +1,6 @@
 module AstGen where
 
 import Ast
-import Parser (node)
 import Control.Monad
 import Test.QuickCheck
 import Test.QuickCheck.Gen
@@ -20,18 +19,23 @@ genUnop :: Gen Unop
 genUnop = genFromEnum Neg
 
 genTy :: Gen Ty
-genTy = genFromEnum TBool
+genTy = oneof [return TBool   ,
+               return TInt    ,
+               TRef <$> genRty]
+
+genRty :: Gen Rty
+genRty = liftM2 RFun (listOf genTy) genRetty
 
 genRetty :: Gen Retty
 genRetty = 
   oneof [RetVal <$> genTy, 
          return RetVoid  ] 
 
-genValueTy :: Gen ValueTy
-genValueTy =
-  oneof [VBool <$> arbitrary, 
-         VInt  <$> arbitrary,
-         VFun  <$> arbitrary]
+-- genValueTy :: Gen ValueTy
+-- genValueTy =
+--  oneof [VBool <$> arbitrary, 
+--         VInt  <$> arbitrary,
+--         VFun  <$> arbitrary]
 
 genMaybeNodeExp :: Gen (Maybe (Node Exp))
 genMaybeNodeExp =
@@ -39,7 +43,7 @@ genMaybeNodeExp =
          return Nothing     ]
 
 genNodeExp :: Gen (Node Exp)
-genNodeExp = node <$> genExp
+genNodeExp = noLoc <$> genExp
 
 genExp :: Gen Exp
 genExp = sized genExp'
@@ -56,7 +60,7 @@ genExp' n | n > 0 =
          liftM3 Bop   genBinop subExp subExp  ,
          liftM2 Uop   genUnop  subExp         ,
          liftM2 Call  subExp   (listOf subExp)]
-    where subExp = node <$> genExp' (n `div` 2)
+    where subExp = noLoc <$> genExp' (n `div` 2)
 
 genVdecl :: Gen Vdecl
 genVdecl = liftM2 Vdecl arbitrary genNodeExp
@@ -70,7 +74,7 @@ genMaybeNodeStmt =
          return Nothing      ]
 
 genNodeStmt :: Gen (Node Stmt)
-genNodeStmt = node <$> genStmt
+genNodeStmt = noLoc <$> genStmt
 
 genStmt :: Gen Stmt
 genStmt =
@@ -95,8 +99,8 @@ genFext = liftM3 Fext genRetty arbitrary genArgs
 
 genDecl :: Gen Decl
 genDecl =
-  oneof [Gfdecl . node <$> genFdecl,
-         Gfext  . node <$> genFext ]
+  oneof [Gfdecl . noLoc <$> genFdecl,
+         Gfext  . noLoc <$> genFext ]
 
 genProg :: Gen Prog
 genProg = listOf genDecl
