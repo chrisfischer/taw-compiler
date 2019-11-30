@@ -56,16 +56,17 @@ cmpUnop T.Lognot = L.bnot
 cmpExpr :: (T.Node T.Exp) -> L.FunctionGen AST.Operand
 cmpExpr (T.Node (T.CBool b) _) = return $ L.booleanConst b
 cmpExpr (T.Node (T.CInt i) _) = return $ L.integerConst $ toInteger i
--- TODO lookup function
-cmpExpr (T.Node (T.Id id) _) = L.getVar (idToShortBS id) >>= L.load
+-- TODO lookup function after lookup vars
+cmpExpr (T.Node (T.Id id) _) = do
+  f <- L.getFunction (idToShortBS id)
+  case f of
+    Just op -> return op
+    Nothing -> L.getVar (idToShortBS id) >>= L.load
 -- TODO expand to function pointers
-cmpExpr (T.Node (T.Call (T.Node (T.Id id) _) args) _) = do
-  -- f' <- cmpExpr f
+cmpExpr (T.Node (T.Call f args) _) = do
+  f' <- cmpExpr f
   args' <- mapM cmpExpr args
-  -- TODO function lookup for types?
-  -- TODO change this hard coding
-  fref <- L.globalf (idToShortBS id)
-  L.call fref args' L.integer
+  L.call f' args' L.integer
 
 cmpExpr (T.Node (T.Bop b e1 e2) _) = do
   e1' <- cmpExpr e1
@@ -80,7 +81,7 @@ cmpStmt :: (T.Node T.Stmt) -> L.FunctionGen ()
 cmpStmt (T.Node (T.Assn (T.Node (T.Id id) _) e2) _) = do
   r <- L.getVar $ idToShortBS id
   newVal <- cmpExpr e2
-  L.store r newVal
+  L.store newVal r
 cmpStmt (T.Node (T.Assn (T.Node (_) _) _) _) = error "Assign called on non id"
 
 cmpStmt (T.Node (T.Decl (T.Vdecl id e)) _) = do
@@ -174,7 +175,7 @@ cmpDecl ctxt (T.Gfdecl (T.Node (T.Fdecl (T.RetVal retty) name args body) _)) =
         L.setCurrentBlock entry
         forM_ args' $ \(ty, n@(AST.Name name)) -> do
           v <- L.alloca ty
-          L.store v (L.local ty n)
+          L.store (L.local ty n) v
           L.assign name v
         cmpBlock body in
   L.define (cmpTy retty) (idToShortBS name) args' blocks
@@ -221,20 +222,24 @@ ppModule ast = C.withContext $ \ctx ->
 
 idd x = noLoc $ Id x
 
-testFDecl2 = Fdecl (RetVal TInt) "add" []
-  [ noLoc $ Decl $ Vdecl "x" $ noLoc $ CInt 42
-  , noLoc $ Decl $ Vdecl "y" $ noLoc $ CInt 10
-  , noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
+testFDecl2 = Fdecl (RetVal TInt) "add" [(TInt, "x"), (TInt, "y")]
+  [ noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
+  , noLoc $ Ret $ noLoc (Id "z") ]
+
+testFDecl3 = Fdecl (RetVal TInt) "do" [(TRef (RFun [TInt, TInt] (RetVal TInt)), "f"), (TInt, "x"), (TInt, "y")]
+  [ noLoc $ Decl $ Vdecl "z" $ noLoc $ Call (idd "f") [(idd "x"), (idd "y")]
   , noLoc $ Ret $ noLoc (Id "z") ]
 
 testFDecl = Fdecl (RetVal TInt) "main" []
   [ noLoc $ Decl $ Vdecl "x" $ noLoc $ CInt 42
-  , noLoc $ Decl $ Vdecl "y" $ noLoc $ Call (idd "add") []
+  , noLoc $ Decl $ Vdecl "f" $ noLoc $ Id "add"
+  , noLoc $ Decl $ Vdecl "y" $ noLoc $ Call (idd "do") [(idd "f"), (idd "x"), (idd "x")]
   , noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
   , noLoc $ Ret $ idd "z" ]
 
 testProg = [
     Gfdecl $ noLoc testFDecl2
+  , Gfdecl $ noLoc testFDecl3
   , Gfdecl $ noLoc testFDecl ]
 
 
@@ -246,4 +251,3 @@ main = do
   res <- runJIT ll "main"
   putStrLn "Result: "
   print res
-  -- print $ extractTypes testProg

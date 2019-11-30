@@ -234,6 +234,13 @@ getVar var = do
     Just x  -> return x
     Nothing -> error $ "Local variable not in scope: " ++ show var
 
+getFunction :: ShortByteString -> FunctionGen (Maybe AST.Operand)
+getFunction name = do
+  ctxt <- gets ftyCtxt
+  return $ case Map.lookup name ctxt of
+    Just ty -> Just $ AST.ConstantOperand $ C.GlobalReference ty $ AST.Name name
+    Nothing -> Nothing
+
 -- REFERENCES
 
 local :: AST.Type -> AST.Name -> AST.Operand
@@ -244,10 +251,10 @@ global = C.GlobalReference
 
 globalf :: ShortByteString -> FunctionGen AST.Operand
 globalf name = do
-  ctxt <- gets ftyCtxt
-  case Map.lookup name ctxt of
-    Just ty -> return $ AST.ConstantOperand $ C.GlobalReference (T.ptr ty) $ AST.Name name
-    Nothing -> error $ "Fucntion name " ++ show name ++ " not found"
+  f <- getFunction name
+  return $ case f of
+    Just op -> op
+    Nothing -> error $ "Function name " ++ show name ++ " not found"
 
 
 -- TYPES
@@ -269,7 +276,7 @@ boolean = AST.IntegerType booleanSize
 
 -- Variable numbers of arguments is not allowed
 functionPtr :: AST.Type -> [AST.Type] -> AST.Type
-functionPtr retty argtys = AST.FunctionType retty argtys False
+functionPtr retty argtys = T.ptr $ AST.FunctionType retty argtys False
 
 typeFromOperand :: AST.Operand -> AST.Type
 typeFromOperand (AST.LocalReference t@(AST.IntegerType 1) _) = t
@@ -280,6 +287,7 @@ typeFromOperand (AST.LocalReference t@(AST.FunctionType _ _ _) _) = t
 typeFromOperand (AST.LocalReference _ _) = error "Unrecognized type"
 typeFromOperand (AST.ConstantOperand (C.Int 64 _)) = integer
 typeFromOperand (AST.ConstantOperand (C.Int 1 _)) = boolean
+typeFromOperand (AST.ConstantOperand (C.GlobalReference t _)) = t
 typeFromOperand e = error $ "Can only get types for known types: " ++ show e
 
 -- CONSTANTS
