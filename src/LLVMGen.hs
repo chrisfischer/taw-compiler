@@ -37,7 +37,10 @@ runLLVM mod (LLVM m) = execState m mod
 
 -- | Create a named empty module
 emptyModule :: ShortByteString -> AST.Module
-emptyModule label = AST.defaultModule { AST.moduleName = label }
+emptyModule fileName = AST.defaultModule {
+    AST.moduleName = fileName
+  , AST.moduleSourceFileName = fileName
+  }
 
 -- | Append a new declaration to the current module
 addDefn :: AST.Definition -> LLVM ()
