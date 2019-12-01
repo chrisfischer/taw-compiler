@@ -1,15 +1,16 @@
 module Parser where
 
+import Text.Parsec.Combinator
+import Text.ParserCombinators.Parsec
 import Text.ParserCombinators.Parsec.Expr
 import Text.ParserCombinators.Parsec.Language
 import qualified Text.ParserCombinators.Parsec.Token as Token
-import Text.ParserCombinators.Parsec
-import Control.Monad
-import Ast
 
-import Text.Parsec.Combinator
+import Control.Monad
+
 import System.Directory (doesDirectoryExist, getDirectoryContents)
 
+import Ast
 
 -----------------------------
 -- UTILS --------------------
@@ -18,34 +19,42 @@ import System.Directory (doesDirectoryExist, getDirectoryContents)
 -- Printing / Parsing Utilities
 
 printFile :: String -> IO ()
-printFile fname =
-  do s <- readFile fname
-     print s
+printFile fname = do
+  s <- readFile fname
+  print s
 
-parseString :: String -> IO ()
-parseString = parseTest langParser
+parseString :: String -> String -> IO Prog
+parseString s filePath =
+  case parse langParser filePath s of
+    Left e -> error $ show e
+    Right p -> return p
 
-parseFile :: FilePath -> IO ()
-parseFile name =
-  do s <- readFile name
-     parseString s
+parseFile :: FilePath -> IO Prog
+parseFile name = do
+  s <- readFile name
+  parseString s name
+
+parseFileTest :: FilePath -> IO ()
+parseFileTest name = do
+  s <- readFile name
+  parseTest langParser s
 
 parseFileD :: FilePath -> IO ()
-parseFileD name =
-  do s <- readFile $ "./tawprogs/" ++ name
-     parseTest (parserTraced "langParser" langParser) s
+parseFileD name = do
+  s <- readFile $ "./tawprogs/" ++ name
+  parseTest (parserTraced "langParser" langParser) s
 
 parseAllFiles :: String -> IO ()
-parseAllFiles dir =
-  do names <- getDirectoryContents dir
-     let properNames = filter (`notElem` [".", ".."]) names
-     paths <- forM properNames $ \name -> print name >> parseFile (dir ++ "/" ++ name)
-     return ()
+parseAllFiles dir = do
+  names <- getDirectoryContents dir
+  let properNames = filter (`notElem` [".", ".."]) names
+  forM_ properNames $ \name ->
+    print name >> parseFile (dir ++ "/" ++ name)
 
 parseTawFiles :: IO ()
 parseTawFiles = parseAllFiles "./tawprogs"
 
-parseTawFile :: String -> IO ()
+parseTawFile :: String -> IO Prog
 parseTawFile name = parseFile $ "./tawprogs/" ++ name
 
 -- Ast.Node data type utilities
@@ -135,7 +144,7 @@ exp = buildExpressionParser expOperators expTerm
 expTerm =   parens Parser.exp
         <|> nodeMap boolExp
         <|> nodeMap intExp
-        <|> nodeMap (try callExp) 
+        <|> nodeMap (try callExp)
         <|> nodeMap idExp
 
 

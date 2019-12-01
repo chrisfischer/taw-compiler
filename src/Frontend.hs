@@ -17,10 +17,6 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified LLVMGen as L
 import qualified Ast as T
 
-import Tests (runJIT)
-import Ast
-import Debug.Trace
-
 -- TODO remove
 idToShortBS = BS.toShort . BS8.pack
 
@@ -203,51 +199,28 @@ extractDeclTy (T.Gfext (T.Node (T.Fext retty name args) _)) = do
 extractTypes :: T.Prog -> L.FunctionTypeContext
 extractTypes p = L.execFunctionTypeGen $ mapM_ extractDeclTy p
 
-
--- | Compile a Taw program
 cmpProg :: T.Prog -> L.LLVM ()
 cmpProg p = do
   let ctxt = extractTypes p
   mapM_ (cmpDecl ctxt) p
 
+-- | Compile a Taw program
 execCmp :: String -> T.Prog -> AST.Module
 execCmp modName p = L.runLLVM (L.emptyModule (idToShortBS modName)) $ cmpProg p
 
-ppModule :: AST.Module -> IO ()
-ppModule ast = C.withContext $ \ctx ->
-  M.withModuleFromAST ctx ast $ \m -> do
-    llstr <- M.moduleLLVMAssembly m
-    BS8.putStrLn llstr
+-- ppModule :: AST.Module -> IO ()
+-- ppModule ast = C.withContext $ \ctx ->
+--   M.withModuleFromAST ctx ast $ \m -> do
+--     llstr <- M.moduleLLVMAssembly m
+--     BS8.putStrLn llstr
 
+-- main :: IO ()
+-- main = do
+--   testProg' <- parseFile "tawprogs/fptrs.taw"
+--   putStrLn $ show testProg'
+--   let ll = execCmp "tawprogs/fptrs.taw" testProg'
 
-idd x = noLoc $ Id x
-
-testFDecl2 = Fdecl (RetVal TInt) "add" [(TInt, "x"), (TInt, "y")]
-  [ noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
-  , noLoc $ Ret $ noLoc (Id "z") ]
-
-testFDecl3 = Fdecl (RetVal TInt) "do" [(TRef (RFun [TInt, TInt] (RetVal TInt)), "f"), (TInt, "x"), (TInt, "y")]
-  [ noLoc $ Decl $ Vdecl "z" $ noLoc $ Call (idd "f") [(idd "x"), (idd "y")]
-  , noLoc $ Ret $ noLoc (Id "z") ]
-
-testFDecl = Fdecl (RetVal TInt) "main" []
-  [ noLoc $ Decl $ Vdecl "x" $ noLoc $ CInt 42
-  , noLoc $ Decl $ Vdecl "f" $ noLoc $ Id "add"
-  , noLoc $ Decl $ Vdecl "y" $ noLoc $ Call (idd "do") [(idd "f"), (idd "x"), (idd "x")]
-  , noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
-  , noLoc $ Ret $ idd "z" ]
-
-testProg = [
-    Gfdecl $ noLoc testFDecl2
-  , Gfdecl $ noLoc testFDecl3
-  , Gfdecl $ noLoc testFDecl ]
-
-
-main :: IO ()
-main = do
-  let ll = execCmp "test.taw" testProg
-  -- putStrLn $ show ll
-  ppModule ll
-  res <- runJIT ll "main"
-  putStrLn "Result: "
-  print res
+--   ppModule ll
+--   res <- runJIT ll "main"
+--   putStrLn "Result: "
+--   print res

@@ -305,52 +305,11 @@ executeProg entry prog =
     Left e -> Left e
 
 
--- idd x = noLoc $ Id x
-
--- testFDecl2 = Fdecl (RetVal TInt) "add" []
---   [ noLoc $ Decl $ Vdecl "x" $ noLoc $ CInt 42
---   , noLoc $ Decl $ Vdecl "y" $ noLoc $ CInt 10
---   , noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
---   , noLoc $ Ret $ noLoc (Id "z") ]
-
--- testFDecl = Fdecl (RetVal TInt) "main" []
---   [ noLoc $ Decl $ Vdecl "x" $ noLoc $ CInt 42
---   , noLoc $ Decl $ Vdecl "y" $ noLoc $ Call (idd "add") []
---   , noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
---   , noLoc $ Ret $ noLoc (Id "z") ]
-
--- testProg = [
---     Gfdecl $ noLoc testFDecl2
---   , Gfdecl $ noLoc testFDecl ]
-
-idd x = noLoc $ Id x
-
-testFDecl2 = Fdecl (RetVal TInt) "add" [(TInt, "x"), (TInt, "y")]
-  [ noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
-  , noLoc $ Ret $ noLoc (Id "z") ]
-
-testFDecl3 = Fdecl (RetVal TInt) "do" [(TRef (RFun [TInt, TInt] (RetVal TInt)), "f1"), (TInt, "x"), (TInt, "y")]
-  [ noLoc $ Decl $ Vdecl "z" $ noLoc $ Call (idd "f1") [(idd "x"), (idd "y")]
-  , noLoc $ Ret $ noLoc (Id "z") ]
-
-testFDecl = Fdecl (RetVal TInt) "main" []
-  [ noLoc $ Decl $ Vdecl "x" $ noLoc $ CInt 42
-  , noLoc $ Decl $ Vdecl "f" $ noLoc $ Id "add"
-  , noLoc $ Decl $ Vdecl "y" $ noLoc $ Call (idd "do") [(idd "f"), (idd "x"), (idd "x")]
-  , noLoc $ Decl $ Vdecl "z" $ noLoc $ Bop Add (idd "x") (idd "y")
-  , noLoc $ Ret $ idd "z" ]
-
-testProg = [
-    Gfdecl $ noLoc testFDecl2
-  , Gfdecl $ noLoc testFDecl3
-  , Gfdecl $ noLoc testFDecl ]
-
-
 run :: Id -> Prog -> IO ()
 run entry prog = do
   let r = executeProg entry prog
   putStrLn (display r)
-
-display :: Show a => (Either (Int, String) a) -> String
-display (Left (_, v))  = "Exception: " ++ v
-display (Right v) = "Result: " ++ show v
+  where
+    display :: Show a => (Either (Int, String) a) -> String
+    display (Left (_, v))  = "Exception: " ++ v
+    display (Right v) = "Result: " ++ show v
