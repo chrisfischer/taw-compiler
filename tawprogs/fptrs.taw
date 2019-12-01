@@ -1,0 +1,16 @@
+int add (int x, int y) {
+  var z = x + y;
+  return z;
+}
+
+int do ((int, int) -> int f, int x, int y) {
+  return f(x, y);
+}
+
+int main() {
+  var x = 42;
+  var y = 10;
+  var z = add;
+  var w = do(z, x, y);
+  return w;
+}
