@@ -230,12 +230,12 @@ assign name x = modify $ \s ->
   s { symbleTable = Map.insert name x (symbleTable s) }
 
 -- | Get the LLVM operand associated with the given string
-getVar :: ShortByteString -> FunctionGen AST.Operand
-getVar var = do
+getVar :: ShortByteString -> FunctionGen (Maybe AST.Operand)
+getVar name = do
   syms <- gets symbleTable
-  case Map.lookup var syms of
-    Just x  -> return x
-    Nothing -> error $ "Local variable not in scope: " ++ show var
+  return $ case Map.lookup name syms of
+    Just x  -> Just x
+    Nothing -> Nothing
 
 getFunction :: ShortByteString -> FunctionGen (Maybe AST.Operand)
 getFunction name = do
@@ -244,6 +244,20 @@ getFunction name = do
     Just ty -> Just $ AST.ConstantOperand $ C.GlobalReference ty $ AST.Name name
     Nothing -> Nothing
 
+localv :: ShortByteString -> FunctionGen AST.Operand
+localv name = do
+  v <- getVar name
+  return $ case v of
+    Just op -> op
+    Nothing -> error $ "Local variable not in scope: " ++ show name
+
+globalf :: ShortByteString -> FunctionGen AST.Operand
+globalf name = do
+  f <- getFunction name
+  return $ case f of
+    Just op -> op
+    Nothing -> error $ "Function " ++ show name ++ " not found"
+
 -- REFERENCES
 
 local :: AST.Type -> AST.Name -> AST.Operand
@@ -251,14 +265,6 @@ local = AST.LocalReference
 
 global :: AST.Type -> AST.Name -> C.Constant
 global = C.GlobalReference
-
-globalf :: ShortByteString -> FunctionGen AST.Operand
-globalf name = do
-  f <- getFunction name
-  return $ case f of
-    Just op -> op
-    Nothing -> error $ "Function name " ++ show name ++ " not found"
-
 
 -- TYPES
 

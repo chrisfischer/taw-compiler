@@ -52,18 +52,16 @@ cmpUnop T.Lognot = L.bnot
 cmpExpr :: (T.Node T.Exp) -> L.FunctionGen AST.Operand
 cmpExpr (T.Node (T.CBool b) _) = return $ L.booleanConst b
 cmpExpr (T.Node (T.CInt i) _) = return $ L.integerConst $ toInteger i
--- TODO lookup function after lookup vars
 cmpExpr (T.Node (T.Id id) _) = do
-  f <- L.getFunction (idToShortBS id)
-  case f of
-    Just op -> return op
-    Nothing -> L.getVar (idToShortBS id) >>= L.load
--- TODO expand to function pointers
+  let bsId = idToShortBS id
+  v <- L.getVar bsId
+  case v of
+    Just op -> L.load op
+    Nothing -> L.globalf bsId
 cmpExpr (T.Node (T.Call f args) _) = do
   f' <- cmpExpr f
   args' <- mapM cmpExpr args
   L.call f' args' L.integer
-
 cmpExpr (T.Node (T.Bop b e1 e2) _) = do
   e1' <- cmpExpr e1
   e2' <- cmpExpr e2
@@ -75,7 +73,7 @@ cmpExpr (T.Node (T.Uop u e) _) = do
 -- | Compile a T statement
 cmpStmt :: (T.Node T.Stmt) -> L.FunctionGen ()
 cmpStmt (T.Node (T.Assn (T.Node (T.Id id) _) e2) _) = do
-  r <- L.getVar $ idToShortBS id
+  r <- L.localv $ idToShortBS id
   newVal <- cmpExpr e2
   L.store newVal r
 cmpStmt (T.Node (T.Assn (T.Node (_) _) _) _) = error "Assign called on non id"
@@ -83,9 +81,7 @@ cmpStmt (T.Node (T.Assn (T.Node (_) _) _) _) = error "Assign called on non id"
 cmpStmt (T.Node (T.Decl (T.Vdecl id e)) _) = do
   e' <- cmpExpr e
   let ty = L.typeFromOperand e'
-  traceM (show ty)
   r <- L.alloca ty
-  traceM (show r)
   L.store e' r
   L.assign (idToShortBS id) r
 
