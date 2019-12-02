@@ -245,20 +245,28 @@ block :: Parser Block
 block = many (noLoc <$> stmt)
 
 stmt :: Parser Stmt
-stmt =   retStmt
-     <|> declStmt
-     <|> assnStmt
---     <|> scallStmt
-     <|> ifStmt
-     <|> forStmt
-     <|> whileStmt
+stmt = retStmt
+   <|> declStmt
+   <|> assnStmt
+   <|> scallStmt
+   <|> ifStmt
+   <|> forStmt
+   <|> whileStmt
 
 assnStmt :: Parser Stmt
-assnStmt = do lhs <- identifier
-              reservedOp "="
-              rhs <- Parser.exp
-              semi
-              return $ Ast.Assn (noLoc $ Ast.Id lhs) rhs
+assnStmt = do
+  idEx <- idExp
+  reservedOp "="
+  rhs <- Parser.exp
+  semi
+  return $ Ast.Assn (noLoc idEx) rhs
+
+scallStmt :: Parser Stmt
+scallStmt = do
+  idEx <- idExp
+  argExs <- parens $ sepEndBy Parser.exp comma
+  semi
+  return $ Ast.SCall (noLoc idEx) argExs
 
 declStmt :: Parser Stmt
 declStmt = Ast.Decl <$> vdecl <* semi
