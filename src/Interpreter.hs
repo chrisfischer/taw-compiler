@@ -116,12 +116,6 @@ setRetValue v = do
   -- verifyRetTy v retty
   let curr' = curr { retVal = Just v }
   modify $ \s -> s { currCtxt = curr' }
-  where
-    verifyRetTy :: (MonadError (Int, String) m) => ValueTy -> Ty -> m ()
-    verifyRetTy (VInt _) TInt = return ()
-    verifyRetTy (VBool _) TBool = return ()
-    verifyRetTy (VFun _) (TRef (RFun _ _)) = return ()
-    verifyRetTy _ _ = throwError (9, "Ret type mismatch")
 
 -- | Creates a new context with the given name and the current as its parent
 pushContext :: MonadState GlobalContext m => Id -> m ()
@@ -168,6 +162,21 @@ popContext = do
       else Just c
 
 --------------------------------------------------------------------------
+-- TODO check that function pointer types actually match
+-- | Verify that the given types match the specified types
+verifyArgTypes :: (MonadError (Int, String) m) => [ValueTy] -> [Ty] -> m ()
+verifyArgTypes ((VInt _):xs) (TInt:ys) = verifyArgTypes xs ys
+verifyArgTypes ((VBool _):xs) (TBool:ys) = verifyArgTypes xs ys
+verifyArgTypes ((VFun _):xs) ((TRef (RFun _ _)):ys) = verifyArgTypes xs ys
+verifyArgTypes [] [] = return ()
+verifyArgTypes _ _ = throwError (9, "Function call type mismatch")
+
+-- TODO combine and check function pointer types
+verifyRetTy :: (MonadError (Int, String) m) => ValueTy -> Ty -> m ()
+verifyRetTy (VInt _) TInt = return ()
+verifyRetTy (VBool _) TBool = return ()
+verifyRetTy (VFun _) (TRef (RFun _ _)) = return ()
+verifyRetTy _ _ = throwError (9, "Ret type mismatch")
 
 -- | Evaluate an expression
 evalE :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
@@ -190,15 +199,6 @@ evalE (Node (Call ef args) _) = do
       evalB body
       popContext
     _ -> throwError (3, "Cannot call a non-function pointer")
-  where
-    -- | Verify that the given types match the specified types
-    verifyArgTypes :: (MonadError (Int, String) m) => [ValueTy] -> [Ty] -> m ()
-    verifyArgTypes ((VInt _):xs) (TInt:ys) = verifyArgTypes xs ys
-    verifyArgTypes ((VBool _):xs) (TBool:ys) = verifyArgTypes xs ys
-    verifyArgTypes ((VFun _):xs) ((TRef (RFun _ _)):ys) = verifyArgTypes xs ys
-    verifyArgTypes [] [] = return ()
-    verifyArgTypes _ _ = throwError (9, "Function call type mismatch")
-
 evalE (Node (Bop o e1 e2) loc) = do
   e1' <- evalE e1
   e2' <- evalE e2
@@ -249,6 +249,20 @@ evalS (Node (Decl (Vdecl x e)) _) = do
 evalS (Node (Ret e) _) = do
     v <- evalE e
     setRetValue v
+evalS (Node (SCall ef args) _) = do
+  fv <- evalE ef
+  case fv of
+    VFun id -> do
+      Node (Fdecl _ _ tyargs body) _ <- lookUpFdecl id
+      argvals <- mapM evalE args
+      verifyArgTypes argvals (Prelude.map fst tyargs)
+      let ids = map snd tyargs
+      pushContext id
+      forM_ (zip ids argvals) $ \(id, v) -> declValue id v
+      evalB body
+      _ <- popContext
+      return ()
+    _ -> throwError (3, "Cannot call a non-function pointer")
 evalS (Node (If e b1 b2) _) = do
   v <- evalE e
   pushSubContext

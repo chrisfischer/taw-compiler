@@ -65,6 +65,7 @@ data Stmt =
     Assn (Node Exp) (Node Exp)
   | Decl Vdecl
   | Ret (Node Exp)
+  | SCall (Node Exp) [Node Exp]
   | If (Node Exp) Block Block
   | For [Vdecl] (Maybe (Node Exp)) (Maybe (Node Stmt)) Block
   | While (Node Exp) Block
