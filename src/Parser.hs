@@ -246,9 +246,9 @@ block = many (noLoc <$> stmt)
 
 stmt :: Parser Stmt
 stmt = retStmt
+   <|> scallStmt
    <|> declStmt
    <|> assnStmt
-   <|> scallStmt
    <|> ifStmt
    <|> forStmt
    <|> whileStmt
