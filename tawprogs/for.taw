@@ -1,7 +1,11 @@
-int f() {
+int printInt(int i);
+
+// Should return 55
+int main() {
   var total = 0;
-  for (var i = 0; i < 10; i = i + 1;) {
-    total = total + i;
+  for (var i = 1, var j = 1; i <= 10; i = i + 1;) {
+    total = total + i + j;
   }
+  var q = printInt(total);
   return total;
 }

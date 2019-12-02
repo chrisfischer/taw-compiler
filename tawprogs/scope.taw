@@ -1,0 +1,34 @@
+int printInt(int i);
+
+int f1() {
+  var x = 0;
+  if (true) {
+    var x = 1;
+  } else {}
+  return x;
+}
+
+int f2() {
+  var y = 0;
+  if (true) {
+    y = 1;
+  } else {}
+  return y;
+}
+
+int f3() {
+  var z = 0;
+  if (true) {
+    var z = 1;
+    return z;
+  } else {}
+  return 10;
+}
+
+int main() {
+  var q = 0;
+  q = printInt(f1());
+  q = printInt(f2());
+  q = printInt(f3());
+  return 0;
+}
