@@ -60,8 +60,9 @@ cmpExpr (T.Node (T.Id id) _) = do
     Nothing -> L.globalf bsId
 cmpExpr (T.Node (T.Call f args) _) = do
   f' <- cmpExpr f
+  let AST.PointerType (AST.FunctionType retty _ _) _ = L.typeFromOperand f'
   args' <- mapM cmpExpr args
-  L.call f' args' L.integer
+  L.call f' args' retty
 cmpExpr (T.Node (T.Bop b e1 e2) _) = do
   e1' <- cmpExpr e1
   e2' <- cmpExpr e2

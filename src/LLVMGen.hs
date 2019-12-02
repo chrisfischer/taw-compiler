@@ -83,7 +83,7 @@ data ScopedSymbolTable
     -- Parent Symbol Table
     parentTable :: Maybe ScopedSymbolTable
   , symbolTable :: Map.Map ShortByteString AST.Operand
-  } deriving Show
+  } deriving (Show, Eq)
 
 -- | An empty, root scoped symboled table
 emptyScopedSymbolTable :: ScopedSymbolTable
@@ -119,7 +119,9 @@ data FunctionGenState
   , names :: Map.Map ShortByteString Int
     -- Map from function names to their compiled types
   , ftyCtxt :: Map.Map ShortByteString AST.Type
-  } deriving Show
+    -- Stack of hoisted instructions
+  , hoistedStack :: [AST.Named AST.Instruction]
+  } deriving (Show, Eq)
 
 data BlockState
   = BlockState {
@@ -129,7 +131,7 @@ data BlockState
   , stack :: [AST.Named AST.Instruction]
     -- Block terminator
   , term :: Maybe (AST.Named AST.Terminator)
-  } deriving Show
+  } deriving (Show, Eq)
 
 -- FUNCTION GENERATION
 
@@ -145,7 +147,14 @@ execFunctionGen m = execState (runFunctionGen m) emptyFunctionGen where
   -- | Create a new FunctionGen with the current block set as the entry block
   emptyFunctionGen :: FunctionGenState
   emptyFunctionGen = FunctionGenState
-    (AST.Name entryBlockName) Map.empty emptyScopedSymbolTable 1 0 Map.empty Map.empty
+    (AST.Name entryBlockName)
+    Map.empty
+    emptyScopedSymbolTable
+    1
+    0
+    Map.empty
+    Map.empty
+    []
 
 -- | Name of the first block in all functions
 entryBlockName :: ShortByteString
@@ -153,15 +162,21 @@ entryBlockName = "entry"
 
 -- | Transform a FunctionState into
 createBlocks :: FunctionGenState -> [BasicBlock]
-createBlocks m = map makeBlock $ sortBlocks $ Map.toList (blocks m) where
-  -- Sort by the block index
-  sortBlocks :: [(AST.Name, BlockState)] -> [(AST.Name, BlockState)]
-  sortBlocks = sortBy (compare `on` (idx . snd))
-  -- | Transform a BlockState into a BasicBlock with a given name
-  makeBlock :: (AST.Name, BlockState) -> BasicBlock
-  makeBlock (l, (BlockState _ s (Just t))) = BasicBlock l (reverse s) t
-  makeBlock (l, (BlockState _ _ Nothing)) =
-    error $ "Block has no terminator: " ++ (show l)
+createBlocks m =
+  let aggBlocks = Map.adjust
+                    (\b -> b { instrStack = instrStack b ++ hoistedStack m })
+                    (AST.Name entryBlockName)
+                    (blocks m) in
+  map makeBlock $ sortBlocks $ Map.toList aggBlocks
+  where
+    -- Sort by the block index
+    sortBlocks :: [(AST.Name, BlockState)] -> [(AST.Name, BlockState)]
+    sortBlocks = sortBy (compare `on` (idx . snd))
+    -- | Transform a BlockState into a BasicBlock with a given name
+    makeBlock :: (AST.Name, BlockState) -> BasicBlock
+    makeBlock (l, (BlockState _ s (Just t))) = BasicBlock l (reverse s) t
+    makeBlock (l, (BlockState _ _ Nothing)) =
+      error $ "Block has no terminator: " ++ (show l)
 
 -- | Create an empty block with the given index
 emptyBlock :: Int -> BlockState
@@ -233,16 +248,25 @@ instr ty ins = do
   n <- freshUnName
   let ref = AST.UnName n
   block <- getCurrentBlock
-  let insns = stack block
-  modifyBlock (block { stack = (ref AST.:= ins) : insns } )
+  let instrs = instrStack block
+  modifyBlock (block { instrStack = (ref AST.:= ins) : instrs } )
   return $ local ty ref
 
--- | For store
+-- | Append a new instruction to the hoisted stack of the function
+hoistedInstr :: AST.Type -> AST.Instruction -> FunctionGen (AST.Operand)
+hoistedInstr ty ins = do
+  n <- freshUnName
+  let ref = AST.UnName n
+  hoisted <- gets hoistedStack
+  modify $ \s -> s { hoistedStack = (ref AST.:= ins) : hoisted }
+  return $ local ty ref
+
+-- | Append a new instruction to the current block without saving a result value
 voidInstr :: AST.Instruction -> FunctionGen ()
 voidInstr ins = do
   block <- getCurrentBlock
-  let insns = stack block
-  modifyBlock (block { stack = (AST.Do ins) : insns } )
+  let instrs = instrStack block
+  modifyBlock (block { instrStack = (AST.Do ins) : instrs } )
 
 -- | Set the terminator for the current block
 terminator :: AST.Named AST.Terminator -> FunctionGen ()
@@ -348,12 +372,11 @@ typeFromOperand (AST.LocalReference t@(AST.IntegerType 1) _) = t
 typeFromOperand (AST.LocalReference t@(AST.IntegerType 64) _) = t
 typeFromOperand (AST.LocalReference t@(AST.FloatingPointType AST.DoubleFP) _) =
   t
-typeFromOperand (AST.LocalReference t@(AST.FunctionType _ _ _) _) = t
-typeFromOperand (AST.LocalReference _ _) = error "Unrecognized type"
+typeFromOperand (AST.LocalReference t@(AST.PointerType (AST.FunctionType _ _ _) _) _) = t
 typeFromOperand (AST.ConstantOperand (C.Int 64 _)) = integer
 typeFromOperand (AST.ConstantOperand (C.Int 1 _)) = boolean
 typeFromOperand (AST.ConstantOperand (C.GlobalReference t _)) = t
-typeFromOperand e = error $ "Can only get types for known types: " ++ show e
+typeFromOperand e = error $ "Unrecognized type: " ++ show e
 
 -- CONSTANTS
 
