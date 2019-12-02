@@ -52,7 +52,7 @@ parseAllFiles dir = do
     print name >> parseFile (dir ++ "/" ++ name)
 
 parseTawFiles :: IO ()
-parseTawFiles = parseAllFiles "./tawprogs"
+parseTawFiles = parseAllFiles "../tawprogs"
 
 parseTawFile :: String -> IO Prog
 parseTawFile name = parseFile $ "./tawprogs/" ++ name
@@ -180,7 +180,8 @@ sequenceOfDecl :: Parser [Decl]
 sequenceOfDecl = many decl
 
 decl :: Parser Decl
-decl = Ast.Gfdecl . noLoc <$> fdecl
+decl =   Ast.Gfdecl . noLoc <$> (try fdecl)
+     <|> Ast.Gfext  . noLoc <$> fext
 
 fdecl :: Parser Fdecl
 fdecl =
@@ -189,6 +190,14 @@ fdecl =
      as <- parens Parser.args
      b <- braces block
      return $ Ast.Fdecl rty fname as b
+
+fext :: Parser Fext
+fext =
+  do rty <- Parser.retty
+     fname <- identifier
+     as <- parens Parser.args
+     semi
+     return $ Ast.Fext rty fname as
 
 vdecl :: Parser Vdecl
 vdecl =
