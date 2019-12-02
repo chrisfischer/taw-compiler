@@ -128,7 +128,7 @@ data BlockState
     -- Block index
     idx :: Int
     -- Stack of instructions
-  , stack :: [AST.Named AST.Instruction]
+  , instrStack :: [AST.Named AST.Instruction]
     -- Block terminator
   , term :: Maybe (AST.Named AST.Terminator)
   } deriving (Show, Eq)
@@ -302,7 +302,7 @@ assign name x = do
         Just x  -> Just x
         Nothing -> Nothing
 
--- | Get the LLVM operand associated with the given string in any of the
+-- | Get the LLVM operand associated with the given variable name in any of the
 -- current or parent scopes
 getVar :: ShortByteString -> FunctionGen (Maybe AST.Operand)
 getVar name = do
@@ -317,11 +317,21 @@ getVar name = do
           Just p -> getVarInScope name p
           Nothing -> return Nothing
 
-getFunction :: ShortByteString -> FunctionGen (Maybe AST.Operand)
-getFunction name = do
+-- | Get the LLVM type associated with the given function name
+getFunctionType :: ShortByteString -> FunctionGen (Maybe AST.Type)
+getFunctionType name = do
   ctxt <- gets ftyCtxt
   return $ case Map.lookup name ctxt of
-    Just ty -> Just $ AST.ConstantOperand $ C.GlobalReference ty $ AST.Name name
+    Just ty -> Just ty
+    Nothing -> Nothing
+
+-- | Get an LLVM operand pointing to the function with the given name
+getFunction :: ShortByteString -> FunctionGen (Maybe AST.Operand)
+getFunction name = do
+  ty <- getFunctionType name
+  return $ case ty of
+    Just ty' ->
+      Just $ AST.ConstantOperand $ C.GlobalReference ty' $ AST.Name name
     Nothing -> Nothing
 
 localv :: ShortByteString -> FunctionGen AST.Operand
@@ -366,6 +376,9 @@ boolean = AST.IntegerType booleanSize
 -- Variable numbers of arguments is not allowed
 functionPtr :: AST.Type -> [AST.Type] -> AST.Type
 functionPtr retty argtys = T.ptr $ AST.FunctionType retty argtys False
+
+void :: AST.Type
+void = AST.VoidType
 
 typeFromOperand :: AST.Operand -> AST.Type
 typeFromOperand (AST.LocalReference t@(AST.IntegerType 1) _) = t
@@ -489,13 +502,19 @@ bnot a = instr boolean $ AST.Xor (booleanConst True) a []
 
 -- EXPRESSIONS
 
+-- Adds empty parameter attributes
+toArgs :: [AST.Operand] -> [(AST.Operand, [A.ParameterAttribute])]
+toArgs = map (\x -> (x, []))
+
 -- Call the given function with the given arguments
 call :: AST.Operand -> [AST.Operand] -> AST.Type -> FunctionGen AST.Operand
 call fun args retty =
   instr retty $ AST.Call Nothing CC.C [] (Right fun) (toArgs args) [] [] where
-    -- Adds empty parameter attributes
-    toArgs :: [AST.Operand] -> [(AST.Operand, [A.ParameterAttribute])]
-    toArgs = map (\x -> (x, []))
+
+-- Call the given function with the given arguments
+scall :: AST.Operand -> [AST.Operand] -> FunctionGen ()
+scall fun args =
+  voidInstr $ AST.Call Nothing CC.C [] (Right fun) (toArgs args) [] [] where
 
 -- | Allocate space for a local variable of the given type
 alloca :: AST.Type -> FunctionGen AST.Operand

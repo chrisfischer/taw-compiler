@@ -91,6 +91,11 @@ cmpStmt (T.Node (T.Ret e) _) = do
   e' <- cmpExpr e
   L.ret e'
 
+cmpStmt (T.Node (T.SCall f args) _) = do
+  f' <- cmpExpr f
+  args' <- mapM cmpExpr args
+  L.scall f' args'
+
 cmpStmt (T.Node (T.If e b1 b2) _) = do
   thenLbl <- L.addBlock "then"
   elseLbl <- L.addBlock "else"
@@ -167,9 +172,8 @@ cmpTy (T.TRef (T.RFun argtys retty)) =
 
 cmpRetty :: T.Retty -> AST.Type
 cmpRetty (T.RetVal t) = cmpTy t
-cmpRetty T.RetVoid = undefined  -- TODO
+cmpRetty T.RetVoid = L.void
 
--- TODO handle void
 -- | Compile a Taw function declaration
 cmpDecl :: L.FunctionTypeContext -> T.Decl -> L.LLVM ()
 cmpDecl ctxt (T.Gfdecl (T.Node (T.Fdecl (T.RetVal retty) name args body) _)) =
@@ -184,8 +188,6 @@ cmpDecl ctxt (T.Gfdecl (T.Node (T.Fdecl (T.RetVal retty) name args body) _)) =
           L.assign name v
         cmpBlock body in
   L.define (cmpTy retty) (idToShortBS name) args' blocks
-
--- TODO handle void
 cmpDecl _ (T.Gfext (T.Node (T.Fext (T.RetVal retty) name args) _)) =
   let args' = map (\(ty, id) -> (cmpTy ty, AST.Name (idToShortBS id))) args in
   L.external (cmpTy retty) (idToShortBS name) args'
