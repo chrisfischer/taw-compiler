@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# OPTIONS -fwarn-incomplete-patterns #-}
 
 module LLVMGen where
 

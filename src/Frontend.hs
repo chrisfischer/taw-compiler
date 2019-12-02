@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS -fwarn-incomplete-patterns #-}
 
 module Frontend where
 
@@ -176,7 +177,7 @@ cmpRetty T.RetVoid = L.void
 
 -- | Compile a Taw function declaration
 cmpDecl :: L.FunctionTypeContext -> T.Decl -> L.LLVM ()
-cmpDecl ctxt (T.Gfdecl (T.Node (T.Fdecl (T.RetVal retty) name args body) _)) =
+cmpDecl ctxt (T.Gfdecl (T.Node (T.Fdecl retty name args body) _)) =
   let args' = map (\(ty, id) -> (cmpTy ty, AST.Name (idToShortBS id))) args
       blocks = L.createBlocks $ L.execFunctionGen $ do
         L.setFtyCtxt ctxt
@@ -187,10 +188,10 @@ cmpDecl ctxt (T.Gfdecl (T.Node (T.Fdecl (T.RetVal retty) name args body) _)) =
           L.store (L.local ty n) v
           L.assign name v
         cmpBlock body in
-  L.define (cmpTy retty) (idToShortBS name) args' blocks
-cmpDecl _ (T.Gfext (T.Node (T.Fext (T.RetVal retty) name args) _)) =
+  L.define (cmpRetty retty) (idToShortBS name) args' blocks
+cmpDecl _ (T.Gfext (T.Node (T.Fext retty name args) _)) =
   let args' = map (\(ty, id) -> (cmpTy ty, AST.Name (idToShortBS id))) args in
-  L.external (cmpTy retty) (idToShortBS name) args'
+  L.external (cmpRetty retty) (idToShortBS name) args'
 
 
 -- TYPE PASS
