@@ -202,6 +202,12 @@ getCurrentBlock = do
     Just x -> return x
     Nothing -> error $ "No such block: " ++ show c
 
+-- | Removes the given block from the function generator statex
+removeBlock :: AST.Name -> FunctionGen ()
+removeBlock name = do
+  blks <- gets blocks
+  modify $ \s -> s { blocks = Map.delete name blks }
+
 -- | Get a fresh number to use for unnamed statements
 freshUnName :: FunctionGen Word
 freshUnName = do
@@ -482,21 +488,28 @@ load ptr = instr (typeFromOperand ptr) $ AST.Load False ptr Nothing 0 []
 
 -- CONTROL FLOW
 
+currentBlockHasRet :: FunctionGen Bool
+currentBlockHasRet = do
+  block <- getCurrentBlock
+  return $ case term block of
+    Just (AST.Do (AST.Ret _ _)) -> True
+    _ -> False
+
 -- Branch, if no Ret has been set
 br :: AST.Name -> FunctionGen ()
 br val = do
-  block <- getCurrentBlock
-  case term block of
-    Just (AST.Do (AST.Ret _ _)) -> return ()
-    _ -> terminator $ AST.Do $ AST.Br val []
+  h <- currentBlockHasRet
+  case h of
+    True -> return ()
+    False -> terminator $ AST.Do $ AST.Br val []
 
 -- Contiditonal branch, if no Ret has been set
 cbr :: AST.Operand -> AST.Name -> AST.Name -> FunctionGen ()
 cbr cond tr fl = do
-  block <- getCurrentBlock
-  case term block of
-    Just (AST.Do (AST.Ret _ _)) -> return ()
-    _ -> terminator $ AST.Do $ AST.CondBr cond tr fl []
+  h <- currentBlockHasRet
+  case h of
+    True -> return ()
+    False -> terminator $ AST.Do $ AST.CondBr cond tr fl []
 
 -- Return
 ret :: AST.Operand -> FunctionGen ()

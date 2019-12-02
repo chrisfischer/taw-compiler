@@ -48,7 +48,7 @@ cmpUnop :: T.Unop -> (AST.Operand -> L.FunctionGen AST.Operand)
 cmpUnop T.Neg    = L.ineg
 cmpUnop T.Lognot = L.bnot
 
--- | Compile a T expression
+-- | Compile a Taw expression
 cmpExpr :: (T.Node T.Exp) -> L.FunctionGen AST.Operand
 cmpExpr (T.Node (T.CBool b) _) = return $ L.booleanConst b
 cmpExpr (T.Node (T.CInt i) _) = return $ L.integerConst $ toInteger i
@@ -70,7 +70,8 @@ cmpExpr (T.Node (T.Uop u e) _) = do
   e' <- cmpExpr e
   cmpUnop u e'
 
--- | Compile a T statement
+-- TODO make more general if adding pointers
+-- | Compile a Taw statement
 cmpStmt :: (T.Node T.Stmt) -> L.FunctionGen ()
 cmpStmt (T.Node (T.Assn (T.Node (T.Id id) _) e2) _) = do
   r <- L.localv $ idToShortBS id
@@ -104,17 +105,20 @@ cmpStmt (T.Node (T.If e b1 b2) _) = do
   L.pushScope
   cmpBlock b1            -- Generate code for the true branch
   L.popScope
-  L.br exitLbl           -- Branch to the merge block
+  b1HasRet <- L.currentBlockHasRet
+  L.br exitLbl
 
   -- else
   L.setCurrentBlock elseLbl
   L.pushScope
   cmpBlock b2            -- Generate code for the false branch
   L.popScope
-  L.br exitLbl           -- Branch to the merge block
+  b2HasRet <- L.currentBlockHasRet
+  L.br exitLbl
 
   -- exit
-  L.setCurrentBlock exitLbl
+  if b1HasRet && b2HasRet then L.removeBlock exitLbl
+  else L.setCurrentBlock exitLbl
 
 cmpStmt (T.Node (T.For vs cond iter b) _) = do
   let cond' = case cond of
@@ -165,7 +169,7 @@ cmpRetty (T.RetVal t) = cmpTy t
 cmpRetty T.RetVoid = undefined  -- TODO
 
 -- TODO handle void
--- | Compile a function declaration
+-- | Compile a Taw function declaration
 cmpDecl :: L.FunctionTypeContext -> T.Decl -> L.LLVM ()
 cmpDecl ctxt (T.Gfdecl (T.Node (T.Fdecl (T.RetVal retty) name args body) _)) =
   let args' = map (\(ty, id) -> (cmpTy ty, AST.Name (idToShortBS id))) args
@@ -188,6 +192,7 @@ cmpDecl _ (T.Gfext (T.Node (T.Fext (T.RetVal retty) name args) _)) =
 
 -- TYPE PASS
 
+-- | Extracts the types of the given global declaration
 extractDeclTy :: T.Decl -> L.FunctionTypeGen ()
 extractDeclTy (T.Gfdecl (T.Node (T.Fdecl retty name args _) _)) = do
   let retty' = cmpRetty retty
@@ -200,14 +205,15 @@ extractDeclTy (T.Gfext (T.Node (T.Fext retty name args) _)) = do
       fty = L.functionPtr retty' argtys
   L.setType (idToShortBS name) fty
 
+-- | Extract the types of each global declaration
 extractTypes :: T.Prog -> L.FunctionTypeContext
 extractTypes p = L.execFunctionTypeGen $ mapM_ extractDeclTy p
-
-cmpProg :: T.Prog -> L.LLVM ()
-cmpProg p = do
-  let ctxt = extractTypes p
-  mapM_ (cmpDecl ctxt) p
 
 -- | Compile a Taw program
 execCmp :: String -> T.Prog -> AST.Module
 execCmp modName p = L.runLLVM (L.emptyModule (idToShortBS modName)) $ cmpProg p
+  where
+    cmpProg :: T.Prog -> L.LLVM ()
+    cmpProg p = do
+      let ctxt = extractTypes p
+      mapM_ (cmpDecl ctxt) p
