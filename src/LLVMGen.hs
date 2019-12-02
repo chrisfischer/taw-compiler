@@ -77,6 +77,31 @@ external retty label argtys = addDefn $
 
 -- FUNCTION GENERATION STATE
 
+-- | Symbol table to allow for multiple scopings within the same function
+data ScopedSymbolTable
+  = ScopedSymbolTable {
+    -- Parent Symbol Table
+    parentTable :: Maybe ScopedSymbolTable
+  , symbolTable :: Map.Map ShortByteString AST.Operand
+  } deriving Show
+
+-- | An empty, root scoped symboled table
+emptyScopedSymbolTable :: ScopedSymbolTable
+emptyScopedSymbolTable = ScopedSymbolTable Nothing Map.empty
+
+pushScope :: FunctionGen ()
+pushScope = do
+  syms <- gets scopedSymbolTable
+  let syms' = emptyScopedSymbolTable { parentTable = Just syms }
+  modify $ \s -> s { scopedSymbolTable = syms' }
+
+popScope :: FunctionGen ()
+popScope = do
+  syms <- gets scopedSymbolTable
+  case parentTable syms of
+    Just syms' -> modify $ \s -> s { scopedSymbolTable = syms' }
+    Nothing -> return () -- TODO throw error?
+
 data FunctionGenState
   = FunctionGenState {
     -- Name of the active block to append to
@@ -84,12 +109,13 @@ data FunctionGenState
     -- Blocks for function
   , blocks :: Map.Map AST.Name BlockState
     -- Function scope symbol table
-  , symbleTable :: Map.Map ShortByteString AST.Operand
+  , scopedSymbolTable :: ScopedSymbolTable
     -- Count of basic blocks
   , blockCount :: Int
     -- Count of unnamed instructions, used to get the next free number
-  , count :: Word
-    -- Map from names to number of times it has been used
+  , instrCount :: Word
+    -- Map from names to number of times it has been used, used to get fresh
+    -- names
   , names :: Map.Map ShortByteString Int
     -- Map from function names to their compiled types
   , ftyCtxt :: Map.Map ShortByteString AST.Type
@@ -119,7 +145,7 @@ execFunctionGen m = execState (runFunctionGen m) emptyFunctionGen where
   -- | Create a new FunctionGen with the current block set as the entry block
   emptyFunctionGen :: FunctionGenState
   emptyFunctionGen = FunctionGenState
-    (AST.Name entryBlockName) Map.empty Map.empty 1 0 Map.empty Map.empty
+    (AST.Name entryBlockName) Map.empty emptyScopedSymbolTable 1 0 Map.empty Map.empty
 
 -- | Name of the first block in all functions
 entryBlockName :: ShortByteString
@@ -179,8 +205,8 @@ getCurrentBlock = do
 -- | Get a fresh number to use for unnamed statements
 freshUnName :: FunctionGen Word
 freshUnName = do
-  i <- gets count
-  modify $ \s -> s { count = 1 + i }
+  i <- gets instrCount
+  modify $ \s -> s { instrCount = 1 + i }
   return $ i + 1
 
 -- | Converts a name into a unique name
@@ -226,16 +252,40 @@ setFtyCtxt ctxt = do
 
 -- | Assign a name to the given LLVM operand
 assign :: ShortByteString -> AST.Operand -> FunctionGen ()
-assign name x = modify $ \s ->
-  s { symbleTable = Map.insert name x (symbleTable s) }
+assign name x = do
+  v <- getVarInCurrentScope name
+  case v of
+    Just _ -> error $ "Cannot redeclare variable " ++ show name
+    Nothing -> do
+      syms <- gets scopedSymbolTable
+      let syms' = syms { symbolTable = Map.insert name x (symbolTable syms) }
+      modify $ \s ->
+        s { scopedSymbolTable = syms'}
+  where
+    -- | Get the LLVM operand associated with the given string in the current
+    -- scope
+    getVarInCurrentScope :: ShortByteString ->
+                            FunctionGen (Maybe AST.Operand)
+    getVarInCurrentScope name = do
+      syms <- gets scopedSymbolTable
+      return $ case Map.lookup name (symbolTable syms) of
+        Just x  -> Just x
+        Nothing -> Nothing
 
--- | Get the LLVM operand associated with the given string
+-- | Get the LLVM operand associated with the given string in any of the
+-- current or parent scopes
 getVar :: ShortByteString -> FunctionGen (Maybe AST.Operand)
 getVar name = do
-  syms <- gets symbleTable
-  return $ case Map.lookup name syms of
-    Just x  -> Just x
-    Nothing -> Nothing
+  syms <- gets scopedSymbolTable
+  getVarInScope name syms where
+    getVarInScope :: ShortByteString -> ScopedSymbolTable ->
+                     FunctionGen (Maybe AST.Operand)
+    getVarInScope name syms =
+      case Map.lookup name (symbolTable syms) of
+        Just x  -> return $ Just x
+        Nothing -> case parentTable syms of
+          Just p -> getVarInScope name p
+          Nothing -> return Nothing
 
 getFunction :: ShortByteString -> FunctionGen (Maybe AST.Operand)
 getFunction name = do
@@ -432,13 +482,21 @@ load ptr = instr (typeFromOperand ptr) $ AST.Load False ptr Nothing 0 []
 
 -- CONTROL FLOW
 
--- Branch
+-- Branch, if no Ret has been set
 br :: AST.Name -> FunctionGen ()
-br val = terminator $ AST.Do $ AST.Br val []
+br val = do
+  block <- getCurrentBlock
+  case term block of
+    Just (AST.Do (AST.Ret _ _)) -> return ()
+    _ -> terminator $ AST.Do $ AST.Br val []
 
--- Contiditonal branch
+-- Contiditonal branch, if no Ret has been set
 cbr :: AST.Operand -> AST.Name -> AST.Name -> FunctionGen ()
-cbr cond tr fl = terminator $ AST.Do $ AST.CondBr cond tr fl []
+cbr cond tr fl = do
+  block <- getCurrentBlock
+  case term block of
+    Just (AST.Do (AST.Ret _ _)) -> return ()
+    _ -> terminator $ AST.Do $ AST.CondBr cond tr fl []
 
 -- Return
 ret :: AST.Operand -> FunctionGen ()

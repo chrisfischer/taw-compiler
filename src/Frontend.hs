@@ -94,19 +94,23 @@ cmpStmt (T.Node (T.If e b1 b2) _) = do
   elseLbl <- L.addBlock "else"
   exitLbl <- L.addBlock "exit"
 
-  -- %entry
+  -- cond
   cond <- cmpExpr e
   test <- L.bneq cond (L.booleanConst False)
   L.cbr test thenLbl elseLbl
 
   -- then
   L.setCurrentBlock thenLbl
+  L.pushScope
   cmpBlock b1            -- Generate code for the true branch
+  L.popScope
   L.br exitLbl           -- Branch to the merge block
 
   -- else
   L.setCurrentBlock elseLbl
+  L.pushScope
   cmpBlock b2            -- Generate code for the false branch
+  L.popScope
   L.br exitLbl           -- Branch to the merge block
 
   -- exit
@@ -136,7 +140,9 @@ cmpStmt (T.Node (T.While e b) _) = do
 
   -- loop
   L.setCurrentBlock loopLbl
+  L.pushScope
   cmpBlock b
+  L.popScope
   L.br condLbl
 
   -- exit
@@ -144,7 +150,7 @@ cmpStmt (T.Node (T.While e b) _) = do
 
 cmpStmt (T.Node T.Nop _) = return ()
 
--- | Compile a T block
+-- | Compile a Taw block
 cmpBlock :: T.Block -> L.FunctionGen ()
 cmpBlock = mapM_ cmpStmt
 
@@ -205,20 +211,3 @@ cmpProg p = do
 -- | Compile a Taw program
 execCmp :: String -> T.Prog -> AST.Module
 execCmp modName p = L.runLLVM (L.emptyModule (idToShortBS modName)) $ cmpProg p
-
--- ppModule :: AST.Module -> IO ()
--- ppModule ast = C.withContext $ \ctx ->
---   M.withModuleFromAST ctx ast $ \m -> do
---     llstr <- M.moduleLLVMAssembly m
---     BS8.putStrLn llstr
-
--- main :: IO ()
--- main = do
---   testProg' <- parseFile "tawprogs/fptrs.taw"
---   putStrLn $ show testProg'
---   let ll = execCmp "tawprogs/fptrs.taw" testProg'
-
---   ppModule ll
---   res <- runJIT ll "main"
---   putStrLn "Result: "
---   print res
