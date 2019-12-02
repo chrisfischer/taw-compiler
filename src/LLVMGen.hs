@@ -518,7 +518,7 @@ scall fun args =
 
 -- | Allocate space for a local variable of the given type
 alloca :: AST.Type -> FunctionGen AST.Operand
-alloca ty = instr ty $ AST.Alloca ty Nothing 0 []
+alloca ty = hoistedInstr ty $ AST.Alloca ty Nothing 0 []
 
 -- | Store the given value at the given pointer
 store :: AST.Operand -> AST.Operand -> FunctionGen ()
