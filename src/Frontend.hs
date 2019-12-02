@@ -128,6 +128,8 @@ cmpStmt (T.Node (T.While e b) _) = do
   exitLbl <- L.addBlock "exit"
 
   -- cond
+  L.br condLbl
+  L.setCurrentBlock condLbl
   cond <- cmpExpr e
   test <- L.bneq cond (L.booleanConst False)
   L.cbr test loopLbl exitLbl
