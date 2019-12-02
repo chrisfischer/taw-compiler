@@ -82,7 +82,7 @@ lookUpValue x = do
           _ -> do
             Node (Fdecl _ fn _ _) _ <- lookUpFdecl x
             return $ VFun fn
-            -- TODO better errors
+            -- TODO better errors, currently will state function not found
             -- throwError (0, "Variable " ++ x ++ " not found")
 
 -- | Looks recursively up the context stack and updates closest value
@@ -258,10 +258,10 @@ evalS (Node (If e b1 b2) _) = do
     VInt  _     -> throwError (5, "If condition must eval to bool")
   popSubContext
 evalS (Node (For vs cond iter ss) loc) = do
-  pushSubContext
   forM_ vs $ \(Vdecl x e) -> do
     e' <- evalE e
     assignValue x e'
+  pushSubContext
   let cond' = fromMaybe (Node (CBool True) loc) cond
   let iter' = fromMaybe (Node (Nop) loc) iter
   evalS $ Node (While cond' (iter' : ss)) loc
