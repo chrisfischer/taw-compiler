@@ -71,9 +71,9 @@ cmpExpr (T.Node (T.Uop u e) _) = do
   e' <- cmpExpr e
   cmpUnop u e'
 
--- TODO make more general if adding pointers
 -- | Compile a Taw statement
 cmpStmt :: (T.Node T.Stmt) -> L.FunctionGen ()
+-- TODO make more general if adding pointers
 cmpStmt (T.Node (T.Assn (T.Node (T.Id id) _) e2) _) = do
   r <- L.localv $ idToShortBS id
   newVal <- cmpExpr e2

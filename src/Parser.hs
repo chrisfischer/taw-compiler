@@ -16,7 +16,7 @@ import Ast
 -- UTILS --------------------
 -----------------------------
 
--- Printing / Parsing Utilities
+-- Printing / Parsing Utils
 
 printFile :: String -> IO ()
 printFile fname = do
@@ -57,14 +57,14 @@ parseTawFiles = parseAllFiles "../tawprogs"
 parseTawFile :: String -> IO Prog
 parseTawFile name = parseFile $ "./tawprogs/" ++ name
 
--- Ast.Node data type utilities
+-- AST Utils
 
--- | converts an m of a to a list of Ast.Node a
+-- | Converts an m of a to a list of Ast.Node a
 nodeMap :: Monad m => m a -> m (Ast.Node a)
 nodeMap = (noLoc <$>)
 
--- | takes a constructor and its two arguments and returns a node
---   of the result of applying the arguments to the constructor
+-- | Takes a constructor and its two arguments and returns a node
+-- of the result of applying the arguments to the constructor
 nodeWrap2 c x y = noLoc (c x y)
 
 -----------------------------
@@ -132,20 +132,20 @@ expOperators =
      Infix  (reservedOp ">"   >> return (nodeWrap2 (Bop Gte ))) AssocLeft]
   , [Infix  (reservedOp "=="  >> return (nodeWrap2 (Bop Eq  ))) AssocLeft,
      Infix  (reservedOp "!="  >> return (nodeWrap2 (Bop Neq ))) AssocLeft]
-  , [Infix  (reservedOp "&"   >> return (nodeWrap2 (Bop And ))) AssocLeft]
-  , [Infix  (reservedOp "|"   >> return (nodeWrap2 (Bop Or  ))) AssocLeft]
-  , [Infix  (reservedOp "[&]" >> return (nodeWrap2 (Bop IAnd))) AssocLeft]
-  , [Infix  (reservedOp "[|]" >> return (nodeWrap2 (Bop IOr ))) AssocLeft]
+  , [Infix  (reservedOp "&&"  >> return (nodeWrap2 (Bop And ))) AssocLeft]
+  , [Infix  (reservedOp "||"  >> return (nodeWrap2 (Bop Or  ))) AssocLeft]
+  , [Infix  (reservedOp "&"   >> return (nodeWrap2 (Bop IAnd))) AssocLeft]
+  , [Infix  (reservedOp "|"   >> return (nodeWrap2 (Bop IOr ))) AssocLeft]
   ]
 
 exp :: Parser (Node Exp)
 exp = buildExpressionParser expOperators expTerm
 
-expTerm =   parens Parser.exp
-        <|> nodeMap boolExp
-        <|> nodeMap intExp
-        <|> nodeMap (try callExp)
-        <|> nodeMap idExp
+expTerm = parens Parser.exp
+      <|> nodeMap boolExp
+      <|> nodeMap intExp
+      <|> nodeMap (try callExp)
+      <|> nodeMap idExp
 
 
 -----------------------------
@@ -153,8 +153,8 @@ expTerm =   parens Parser.exp
 -----------------------------
 
 boolExp :: Parser Exp
-boolExp =   (reserved "true"  >> return (Ast.CBool True))
-        <|> (reserved "false" >> return (Ast.CBool False))
+boolExp = (reserved "true"  >> return (Ast.CBool True))
+      <|> (reserved "false" >> return (Ast.CBool False))
 
 intExp :: Parser Exp
 intExp = Ast.CInt . fromInteger <$> integer
@@ -163,10 +163,10 @@ idExp :: Parser Exp
 idExp = Ast.Id <$> identifier
 
 callExp :: Parser Exp
-callExp =
-  do idEx <- idExp
-     argExs <- parens $ sepEndBy Parser.exp comma
-     return $ Ast.Call (noLoc idEx) argExs
+callExp = do
+  idEx <- idExp
+  argExs <- parens $ sepEndBy Parser.exp comma
+  return $ Ast.Call (noLoc idEx) argExs
 
 
 -----------------------------
@@ -180,32 +180,32 @@ sequenceOfDecl :: Parser [Decl]
 sequenceOfDecl = many decl
 
 decl :: Parser Decl
-decl =   Ast.Gfdecl . noLoc <$> (try fdecl)
-     <|> Ast.Gfext  . noLoc <$> fext
+decl = Ast.Gfdecl . noLoc <$> (try fdecl)
+   <|> Ast.Gfext  . noLoc <$> fext
 
 fdecl :: Parser Fdecl
-fdecl =
-  do rty <- Parser.retty
-     fname <- identifier
-     as <- parens Parser.args
-     b <- braces block
-     return $ Ast.Fdecl rty fname as b
+fdecl = do
+  rty <- Parser.retty
+  fname <- identifier
+  as <- parens Parser.args
+  b <- braces block
+  return $ Ast.Fdecl rty fname as b
 
 fext :: Parser Fext
-fext =
-  do rty <- Parser.retty
-     fname <- identifier
-     as <- parens Parser.args
-     semi
-     return $ Ast.Fext rty fname as
+fext = do
+  rty <- Parser.retty
+  fname <- identifier
+  as <- parens Parser.args
+  semi
+  return $ Ast.Fext rty fname as
 
 vdecl :: Parser Vdecl
-vdecl =
-  do reserved "var"
-     lhs <- identifier
-     reservedOp "="
-     rhs <- Parser.exp
-     return $ Ast.Vdecl lhs rhs
+vdecl = do
+  reserved "var"
+  lhs <- identifier
+  reservedOp "="
+  rhs <- Parser.exp
+  return $ Ast.Vdecl lhs rhs
 
 -- fdecl helper parsers
 args :: Parser [(Ty, Id)]
@@ -222,19 +222,20 @@ arg = do t <- ty
 -----------------------------
 
 ty :: Parser Ty
-ty =   (reserved "int"  >> return Ast.TInt)
-   <|> (reserved "bool" >> return Ast.TBool)
-   <|> TRef <$> rty
+ty =  (reserved "int"  >> return Ast.TInt)
+  <|> (reserved "bool" >> return Ast.TBool)
+  <|> TRef <$> rty
 
 rty :: Parser Rty
-rty = do tys <- parens $ sepEndBy ty comma
-         arrow
-         r <- Parser.retty
-         return $ RFun tys r
+rty = do
+  tys <- parens $ sepEndBy ty comma
+  arrow
+  r <- Parser.retty
+  return $ RFun tys r
 
 retty :: Parser Retty
-retty =   (reserved "void" >> return Ast.RetVoid)
-      <|> RetVal <$> ty
+retty = (reserved "void" >> return Ast.RetVoid)
+    <|> RetVal <$> ty
 
 -----------------------------
 -- STATEMENTS ---------------
@@ -266,32 +267,32 @@ retStmt :: Parser Stmt
 retStmt = reserved "return" >> Ast.Ret <$> Parser.exp <* semi
 
 ifStmt :: Parser Stmt
-ifStmt =
-  do reserved "if"
-     condExp <- parens Parser.exp
-     ifBlock <- braces block
-     reserved "else"
-     elseBlock <- braces block
-     return $ Ast.If condExp ifBlock elseBlock
+ifStmt = do
+  reserved "if"
+  condExp <- parens Parser.exp
+  ifBlock <- braces block
+  reserved "else"
+  elseBlock <- braces block
+  return $ Ast.If condExp ifBlock elseBlock
 
 forStmt :: Parser Stmt
-forStmt =
-  do reserved "for"
-     openParen
-     vars  <- sepEndBy vdecl comma
-     semi
-     cond  <- Parser.exp
-     semi
-     s     <- noLoc <$> Parser.stmt
-     closeParen
-     blck  <- braces block
-     return $ Ast.For vars (Just cond) (Just s) blck
+forStmt = do
+  reserved "for"
+  openParen
+  vars  <- sepEndBy vdecl comma
+  semi
+  cond  <- Parser.exp
+  semi
+  s     <- noLoc <$> Parser.stmt
+  closeParen
+  blck  <- braces block
+  return $ Ast.For vars (Just cond) (Just s) blck
 -- TODO account for missing forms (i.e. Nothing)
 
 whileStmt :: Parser Stmt
-whileStmt =
-  do reserved "while"
-     condExp <- parens Parser.exp
-     blck    <- braces block
-     return $ Ast.While condExp blck
+whileStmt = do
+  reserved "while"
+  condExp <- parens Parser.exp
+  blck    <- braces block
+  return $ Ast.While condExp blck
 

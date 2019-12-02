@@ -571,4 +571,8 @@ execFunctionTypeGen :: FunctionTypeGen a -> FunctionTypeContext
 execFunctionTypeGen m = execState (runFunctionTypeGen m) Map.empty
 
 setType :: ShortByteString -> AST.Type -> FunctionTypeGen ()
-setType id ty = modify $ \s -> Map.insert id ty s
+setType id ty = do
+  s <- get
+  case Map.lookup id s of
+    Just _ -> error $ "Cannot have multiple definitions of function " ++ show id
+    Nothing -> modify $ \s -> Map.insert id ty s
