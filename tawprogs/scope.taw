@@ -4,7 +4,7 @@ int f1() {
   var x = 0;
   if (true) {
     var x = 1;
-  } else {}
+  }
   return x;
 }
 
@@ -12,7 +12,7 @@ int f2() {
   var y = 0;
   if (true) {
     y = 1;
-  } else {}
+  }
   return y;
 }
 
@@ -21,7 +21,7 @@ int f3() {
   if (true) {
     var z = 1;
     return z;
-  } else {}
+  }
   return 10;
 }
 
@@ -40,6 +40,6 @@ int main() {
   printInt(f1());
   printInt(f2());
   printInt(f3());
-  rec(10);
+  // rec(10);
   return 0;
 }

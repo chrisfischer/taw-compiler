@@ -119,11 +119,14 @@ cmpStmt (T.Node (T.If e b1 b2) _) = do
 
   -- else
   L.setCurrentBlock elseLbl
-  L.pushScope
-  cmpBlock b2            -- Generate code for the false branch
-  L.popScope
+  case b2 of
+    Just b2' -> do
+      L.pushScope
+      cmpBlock b2'       -- Generate code for the false branch
+      L.popScope
+      L.br exitLbl
+    Nothing -> L.br exitLbl
   b2HasRet <- L.currentBlockHasRet
-  L.br exitLbl
 
   -- exit
   if b1HasRet && b2HasRet then L.removeBlock exitLbl

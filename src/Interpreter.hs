@@ -276,7 +276,10 @@ evalS (Node (If e b1 b2) _) = do
   pushSubContext
   case v of
     VBool True  -> evalB b1
-    VBool False -> evalB b2
+    VBool False ->
+      case b2 of
+        Just b2' -> evalB b2'
+        Nothing -> return ()
     VInt  _     -> throwError (5, "If condition must eval to bool")
   popSubContext
 evalS (Node (For vs cond iter ss) loc) = do
