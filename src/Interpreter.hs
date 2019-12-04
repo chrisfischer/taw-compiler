@@ -109,12 +109,12 @@ declValue x v = do
   modify $ \s -> s { currCtxt = curr' }
 
 setRetValue :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
-               ValueTy -> m ()
+               Maybe ValueTy -> m ()
 setRetValue v = do
   curr <- gets currCtxt
   -- Node (Fdecl (RetVal retty) _ _ _) _ <- lookUpFdecl (fnm curr)
   -- verifyRetTy v retty
-  let curr' = curr { retVal = Just v }
+  let curr' = curr { retVal = v }
   modify $ \s -> s { currCtxt = curr' }
 
 -- | Creates a new context with the given name and the current as its parent
@@ -141,7 +141,7 @@ popSubContext = do
 -- | Sets the current context as the first parent context with a different
 -- function name
 popContext :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
-              m (ValueTy)
+              m (Maybe ValueTy)
 popContext = do
   curr <- gets currCtxt
   let f = fnm curr
@@ -149,9 +149,10 @@ popContext = do
     Just rv -> case findDifferentParent f curr of
       Just c' -> do
         modify $ \s -> s { currCtxt = c' }
-        return rv
+        return $ Just rv
       Nothing -> throwError (11, "Cannot pop top level context")
-    Nothing -> throwError (10, "Function did not return a value")
+    -- TODO check return type to see if void?
+    Nothing -> return Nothing -- throwError (10, "Function did not return a value")
   where
     findDifferentParent :: Id -> FunctionContext -> Maybe FunctionContext
     findDifferentParent id c =
@@ -197,7 +198,10 @@ evalE (Node (Call ef args) _) = do
       pushContext id
       forM_ (zip ids argvals) $ \(id, v) -> declValue id v
       evalB body
-      popContext
+      retv <- popContext
+      case retv of
+        Just v -> return v
+        Nothing -> throwError (10, "Function did not return a value")
     _ -> throwError (3, "Cannot call a non-function pointer")
 evalE (Node (Bop o e1 e2) loc) = do
   e1' <- evalE e1
@@ -246,9 +250,11 @@ evalS (Node (Assn _ _) _) = throwError (4, "Must assign to a variable")
 evalS (Node (Decl (Vdecl x e)) _) = do
   v <- evalE e
   declValue x v
-evalS (Node (Ret e) _) = do
-    v <- evalE e
-    setRetValue v
+evalS (Node (Ret (Just e)) _) = do
+  v <- evalE e
+  setRetValue $ Just v
+evalS (Node (Ret Nothing) _) = do
+  setRetValue Nothing
 evalS (Node (SCall ef args) _) = do
   fv <- evalE ef
   case fv of

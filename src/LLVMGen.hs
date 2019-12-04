@@ -555,8 +555,8 @@ cbr cond tr fl = do
     False -> terminator $ AST.Do $ AST.CondBr cond tr fl []
 
 -- Return
-ret :: AST.Operand -> FunctionGen ()
-ret val = terminator $ AST.Do $ AST.Ret (Just val) []
+ret :: Maybe AST.Operand -> FunctionGen ()
+ret val = terminator $ AST.Do $ AST.Ret val []
 
 
 -- FUNCTION TYPE EXTRACTION

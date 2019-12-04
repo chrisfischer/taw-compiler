@@ -64,7 +64,7 @@ data Vdecl = Vdecl Id (Node Exp) deriving (Show, Eq)
 data Stmt =
     Assn (Node Exp) (Node Exp)
   | Decl Vdecl
-  | Ret (Node Exp)
+  | Ret (Maybe (Node Exp))
   | SCall (Node Exp) [Node Exp]
   | If (Node Exp) Block Block
   | For [Vdecl] (Maybe (Node Exp)) (Maybe (Node Stmt)) Block

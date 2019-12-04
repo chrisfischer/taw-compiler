@@ -88,9 +88,11 @@ cmpStmt (T.Node (T.Decl (T.Vdecl id e)) _) = do
   L.store e' r
   L.assign (idToShortBS id) r
 
-cmpStmt (T.Node (T.Ret e) _) = do
+cmpStmt (T.Node (T.Ret Nothing) _) = do
+  L.ret Nothing
+cmpStmt (T.Node (T.Ret (Just e)) _) = do
   e' <- cmpExpr e
-  L.ret e'
+  L.ret $ Just e'
 
 cmpStmt (T.Node (T.SCall f args) _) = do
   f' <- cmpExpr f
