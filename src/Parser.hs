@@ -272,7 +272,8 @@ declStmt :: Parser Stmt
 declStmt = Ast.Decl <$> vdecl <* semi
 
 retStmt :: Parser Stmt
-retStmt = reserved "return" >> Ast.Ret <$> Parser.exp <* semi
+retStmt = (try $ reserved "return" >> Ast.Ret . Just <$> Parser.exp <* semi)
+        <|> (reserved "return" >> return (Ast.Ret Nothing) <* semi)
 
 ifStmt :: Parser Stmt
 ifStmt = do
