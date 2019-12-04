@@ -1,22 +1,26 @@
-int printInt(int i);
+void printInt(int i);
 
 int add(int x, int y) {
   var z = x + y;
   return z;
 }
 
+(int, int) -> int getf() {
+  return add;
+}
+
+int map ((int, int) -> int f, int x, int y) {
+  return f(x, y);
+}
+
 int main() {
-  var z = add;
+  var z = getf();
   var i = 10;
   var sum = 0;
   while (i > 0) {
     sum = sum + map(z, 1, 2);
     i = i - 1;
-    var q = printInt(sum);
+    printInt(sum);
   }
   return sum;
-}
-
-int map ((int, int) -> int f, int x, int y) {
-  return f(x, y);
 }

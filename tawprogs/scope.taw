@@ -1,4 +1,4 @@
-int printInt(int i);
+void printInt(int i);
 
 int f1() {
   var x = 0;
@@ -25,10 +25,21 @@ int f3() {
   return 10;
 }
 
+void rec(int i) {
+  if (i == 0) {
+    return;
+  } else {
+    printInt(i);
+    rec(i-1);
+  }
+  return;
+}
+
 int main() {
   var q = 0;
-  q = printInt(f1());
-  q = printInt(f2());
-  q = printInt(f3());
+  printInt(f1());
+  printInt(f2());
+  printInt(f3());
+  rec(10);
   return 0;
 }
