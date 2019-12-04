@@ -90,15 +90,17 @@ assignValue :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
             Id -> ValueTy -> m ()
 assignValue x v = do
   curr <- gets currCtxt
-  setInFunCtxt x v curr (fnm curr) where
-    setInFunCtxt :: (MonadError (Int, String) m, MonadState GlobalContext m)
-                    => Id -> ValueTy -> FunctionContext -> Id -> m ()
+  curr' <- setInFunCtxt x v curr (fnm curr)
+  modify $ \s -> s { currCtxt = curr' } where
+    setInFunCtxt :: MonadError (Int, String) m => Id -> ValueTy ->
+                    FunctionContext -> Id -> m FunctionContext
     setInFunCtxt x v c fid =
-      case Map.lookup x $ vs c of
-        Just v -> modify $ \s ->
-          s { currCtxt = (currCtxt s) { vs = Map.insert x v $ vs c } }
+      case Map.lookup x (vs c) of
+        Just _ -> return c { vs = Map.insert x v $ vs c }
         Nothing -> case parentCtxt c of
-          Just c' | (fnm c' == fid) -> setInFunCtxt x v c' fid
+          Just c' | (fnm c' == fid) -> do
+            c'' <- setInFunCtxt x v c' fid
+            return $ c { parentCtxt = Just c'' }
           _ -> throwError (0, "Variable " ++ x ++ " not found")
 
 -- | Adds a new binding for the given Id in the current context
@@ -213,7 +215,7 @@ evalE (Node (Uop o e) loc) = do
 
 -- | Evaluate a binary op
 evalBop :: MonadError (Int, String) m =>
-          Binop -> ValueTy -> ValueTy -> Loc -> m ValueTy
+           Binop -> ValueTy -> ValueTy -> Loc -> m ValueTy
 evalBop Add  (VInt i1) (VInt i2) _ = return $ VInt (i1 + i2)
 evalBop Sub  (VInt i1) (VInt i2) _ = return $ VInt (i1 - i2)
 evalBop Mul  (VInt i1) (VInt i2) _ = return $ VInt (i1 * i2)
@@ -280,12 +282,10 @@ evalS (Node (If e b1 b2) _) = do
 evalS (Node (For vs cond iter ss) loc) = do
   forM_ vs $ \(Vdecl x e) -> do
     e' <- evalE e
-    assignValue x e'
-  pushSubContext
+    declValue x e'
   let cond' = fromMaybe (Node (CBool True) loc) cond
   let iter' = fromMaybe (Node (Nop) loc) iter
-  evalS $ Node (While cond' (iter' : ss)) loc
-  popSubContext
+  evalS $ Node (While cond' (ss ++ [iter'])) loc
 evalS w@(Node (While e ss) _) = do
   v <- evalE e
   pushSubContext
@@ -330,6 +330,10 @@ run entry prog = do
   let r = executeProg entry prog
   putStrLn (display r)
   where
-    display :: Show a => (Either (Int, String) a) -> String
+    display :: (Either (Int, String) ValueTy) -> String
     display (Left (_, v))  = "Exception: " ++ v
-    display (Right v) = "Result: " ++ show v
+    display (Right v) = "Result: " ++ showVType v
+    showVType :: ValueTy -> String
+    showVType (VInt i) = show i
+    showVType (VBool b) = show b
+    showVType (VFun f) = f
