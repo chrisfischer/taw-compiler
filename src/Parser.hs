@@ -276,13 +276,23 @@ retStmt = (try $ reserved "return" >> Ast.Ret . Just <$> Parser.exp <* semi)
       <|> (reserved "return" >> return (Ast.Ret Nothing) <* semi)
 
 ifStmt :: Parser Stmt
-ifStmt = do
+ifStmt = (try ifWithElse) <|> ifNoElse
+
+ifWithElse :: Parser Stmt
+ifWithElse = do
   reserved "if"
   condExp <- parens Parser.exp
   ifBlock <- braces block
   reserved "else"
-  elseBlock <- braces block
+  elseBlock <- Just <$> braces block
   return $ Ast.If condExp ifBlock elseBlock
+
+ifNoElse :: Parser Stmt
+ifNoElse = do
+  reserved "if"
+  condExp <- parens Parser.exp
+  ifBlock <- braces block
+  return $ Ast.If condExp ifBlock (Nothing)
 
 forStmt :: Parser Stmt
 forStmt = do
