@@ -29,8 +29,10 @@ data GlobalContext
 
 data FunctionContext
   = FunctionContext {
+    -- Decl for this function
+    fdecl :: Node Fdecl
     -- Parent context
-    parentCtxt :: Maybe FunctionContext
+  , parentCtxt :: Maybe FunctionContext
     -- Subcontext stack
   , currSubCtxt :: FunctionSubContext
     -- Return value
@@ -56,15 +58,16 @@ newtype Interp a =
 emptyFunctionSubContext = FunctionSubContext Nothing Map.empty
 
 -- | Intializes an empty function context with no parent
-emptyFunctionContext = FunctionContext Nothing emptyFunctionSubContext Nothing
+emptyFunctionContext fdecl =
+  FunctionContext fdecl Nothing emptyFunctionSubContext Nothing
 
 -- | Intializes an empty global context with no parent
-emptyGlobalContext = GlobalContext emptyFunctionContext Map.empty
+emptyGlobalContext entry = GlobalContext (emptyFunctionContext entry) Map.empty
 
 -- | Initializes context with global decls and sets functions
-gCtxtFromProg :: Prog -> Either (Int, String) GlobalContext
-gCtxtFromProg prog =
-  fmap (\fs -> emptyGlobalContext { fdecls = Map.fromList fs }) $
+gCtxtFromProg :: Prog -> Node Fdecl -> Either (Int, String) GlobalContext
+gCtxtFromProg prog entry =
+  fmap (\fs -> (emptyGlobalContext entry) { fdecls = Map.fromList fs }) $
     unwrap prog
   where
     unwrap :: Prog -> Either (Int, String) [(Id, Node Fdecl)]
@@ -75,6 +78,7 @@ gCtxtFromProg prog =
 
 -- Helper functions
 
+-- | Looks for a function declaration with the given name
 lookUpFdecl :: Id -> Interp (Node Fdecl)
 lookUpFdecl x = do
   fs <- gets fdecls
@@ -88,7 +92,7 @@ lookUpValue x = do
   curr <- gets currCtxt
   lookUpFunSubCtxt x (currSubCtxt curr)
   where
-    -- lookUpFunSubCtxt :: (MonadError (Int, String) m, MonadState GlobalContext m) => Id -> FunctionSubContext -> m ValueTy
+    lookUpFunSubCtxt :: Id -> FunctionSubContext -> Interp ValueTy
     lookUpFunSubCtxt x c =
       case Map.lookup x $ vs c of
         Just v  -> return v
@@ -107,8 +111,8 @@ assignValue x v = do
   currSub' <- setInFunSubCtxt x v (currSubCtxt curr)
   modify $ \s -> s { currCtxt = curr { currSubCtxt = currSub' } }
   where
-    -- setInFunSubCtxt :: MonadError (Int, String) m => Id -> ValueTy ->
-    --                    FunctionSubContext -> m FunctionSubContext
+    setInFunSubCtxt :: Id -> ValueTy -> FunctionSubContext ->
+                       Interp FunctionSubContext
     setInFunSubCtxt x v c =
       case Map.lookup x (vs c) of
         Just _ -> return c { vs = Map.insert x v $ vs c }
@@ -126,18 +130,23 @@ declValue x v = do
   let curr' = curr { currSubCtxt = currSub {vs = Map.insert x v (vs currSub) } }
   modify $ \s -> s { currCtxt = curr' }
 
+-- | Sets the return value for the current function, verifies the value type
 setRetValue :: Maybe ValueTy -> Interp ()
 setRetValue v = do
   curr <- gets currCtxt
-  -- Node (Fdecl (RetVal retty) _ _ _) _ <- lookUpFdecl (fnm curr)
-  -- verifyRetTy v retty
+  -- Check that this value is of the correct type
+  case v of
+    Just v' -> do
+      let Node (Fdecl (RetVal retty) _ _ _) _ = fdecl curr
+      verifyValTy v' retty
+    _ -> return ()
   let curr' = curr { retVal = v }
   modify $ \s -> s { currCtxt = curr' }
 
 -- | Creates a new context with the given name and the current as its parent
-pushContext :: Interp ()
-pushContext = modify $ \s ->
-  let currCtxt' = emptyFunctionContext { parentCtxt = (Just $ currCtxt s) } in
+pushContext :: Node Fdecl -> Interp ()
+pushContext f = modify $ \s ->
+  let currCtxt' = (emptyFunctionContext f) {parentCtxt = (Just $ currCtxt s)} in
   s { currCtxt = currCtxt' }
 
 -- | Creates a new context with the current as its parent with the same name
@@ -170,21 +179,24 @@ popContext = do
   return $ retVal curr
 
 --------------------------------------------------------------------------
--- TODO check that function pointer types actually match
--- | Verify that the given types match the specified types
+
+-- | Verify that the given values match the specified types
 verifyArgTypes :: [ValueTy] -> [Ty] -> Interp ()
-verifyArgTypes ((VInt _):xs) (TInt:ys) = verifyArgTypes xs ys
-verifyArgTypes ((VBool _):xs) (TBool:ys) = verifyArgTypes xs ys
-verifyArgTypes ((VFun _):xs) ((TRef (RFun _ _)):ys) = verifyArgTypes xs ys
+verifyArgTypes (t1:xs) (t2:ys) = do
+  verifyValTy t1 t2
+  verifyArgTypes xs ys
 verifyArgTypes [] [] = return ()
 verifyArgTypes _ _ = throwError (9, "Function call type mismatch")
 
--- TODO combine and check function pointer types
-verifyRetTy :: ValueTy -> Ty -> Interp ()
-verifyRetTy (VInt _) TInt = return ()
-verifyRetTy (VBool _) TBool = return ()
-verifyRetTy (VFun _) (TRef (RFun _ _)) = return ()
-verifyRetTy _ _ = throwError (9, "Ret type mismatch")
+-- | Verify that the given value matches the given type
+verifyValTy (VInt _) TInt = return ()
+verifyValTy (VBool _) TBool = return ()
+verifyValTy (VFun id) (TRef (RFun tys1 retty1)) = do
+  Node (Fdecl retty2 _ tyargs _) _ <- lookUpFdecl id
+  if retty1 /= retty2 || tys1 /= map fst tyargs
+  then throwError (9, "Function type mismatch")
+  else return ()
+verifyValTy _ _ = throwError (9, "Type mismatch")
 
 -- | Evaluate an expression
 evalE :: Node Exp -> Interp ValueTy
@@ -197,11 +209,11 @@ evalE (Node (Call ef args) _) = do
   fv <- evalE ef
   case fv of
     VFun id -> do
-      Node (Fdecl _ _ tyargs body) _ <- lookUpFdecl id
+      nf@(Node (Fdecl _ _ tyargs body) _) <- lookUpFdecl id
       argvals <- mapM evalE args
       verifyArgTypes argvals (Prelude.map fst tyargs)
       let ids = map snd tyargs
-      pushContext
+      pushContext nf
       forM_ (zip ids argvals) $ \(id, v) -> declValue id v
       catchError (do {
           evalB body
@@ -274,11 +286,11 @@ evalS (Node (SCall ef args) _) = do
   fv <- evalE ef
   case fv of
     VFun id -> do
-      Node (Fdecl _ _ tyargs body) _ <- lookUpFdecl id
+      nf@(Node (Fdecl _ _ tyargs body) _) <- lookUpFdecl id
       argvals <- mapM evalE args
       verifyArgTypes argvals (Prelude.map fst tyargs)
       let ids = map snd tyargs
-      pushContext
+      pushContext nf
       forM_ (zip ids argvals) $ \(id, v) -> declValue id v
       catchError (do { evalB body ; _ <- popContext ; return () }) returnHandler
     _ -> throwError (3, "Cannot call a non-function pointer")
@@ -323,21 +335,22 @@ executeBlock b gCtxt = runState (runExceptT $ runInterp $ evalB b) gCtxt
 executeProg :: Id -> Prog -> Either (Int, String) ValueTy
 executeProg entry prog =
   let entryF = find (\(Gfdecl (Node (Fdecl _ fname _ _) _)) ->
-                        fname == entry) prog
-      gCtxt = gCtxtFromProg prog in
-  case gCtxt of
-    Right startCtxt ->
-      case entryF of
-        Just (Gfdecl (Node (Fdecl _ _ [] b) _)) ->
+                        fname == entry) prog in
+  case entryF of
+    Just (Gfdecl nf@(Node (Fdecl _ _ [] b) _)) ->
+      let gCtxt = gCtxtFromProg prog nf in
+      case gCtxt of
+        Right startCtxt ->
           let (res, finalCtxt) = executeBlock b startCtxt in
           case (res, retVal $ currCtxt $ finalCtxt) of
             (Left (-1, _), Just r) -> Right r
             (Left e, _) -> Left e
             (Right _, Just r) -> Right r
             (Right _, Nothing) -> Left (10, "Function did not return a value")
-        Just _ -> Left (6, "Entry function must not take in any arguments")
-        Nothing -> Left (7, "Could not find entry function")
-    Left e -> Left e
+        Left e -> Left e
+    Just _ -> Left (6, "Entry function must not take in any arguments")
+    Nothing -> Left (7, "Could not find entry function")
+
 
 
 run :: Id -> Prog -> IO ()
