@@ -192,7 +192,13 @@ cmpDecl ctxt (T.Gfdecl (T.Node (T.Fdecl retty name args body) _)) =
           v <- L.alloca ty
           L.store (L.local ty n) v
           L.assign name v
-        cmpBlock body in
+        cmpBlock body
+        -- Last return is optional in void functions
+        hasRet <- L.currentBlockHasRet
+        case (retty, hasRet) of
+          (T.RetVoid, False) -> L.ret Nothing
+          _ -> return ()
+        in
   L.define (cmpRetty retty) (idToShortBS name) args' blocks
 cmpDecl _ (T.Gfext (T.Node (T.Fext retty name args) _)) =
   let args' = map (\(ty, id) -> (cmpTy ty, AST.Name (idToShortBS id))) args in

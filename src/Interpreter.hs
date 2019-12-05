@@ -203,7 +203,10 @@ evalE (Node (Call ef args) _) = do
       let ids = map snd tyargs
       pushContext
       forM_ (zip ids argvals) $ \(id, v) -> declValue id v
-      catchError (do { evalB body ; return $ VInt 0 }) returnHandler
+      catchError (do {
+          evalB body
+        ; throwError (10, "Cannot call void function as an expression") })
+        returnHandler
     _ -> throwError (3, "Cannot call a non-function pointer")
   where
       returnHandler :: (MonadError (Int, String) m, MonadState GlobalContext m)
@@ -212,7 +215,8 @@ evalE (Node (Call ef args) _) = do
         retv <- popContext
         case retv of
           Just v -> return v
-          Nothing -> throwError (10, "Function did not return a value")
+          Nothing ->
+            throwError (10, "Cannot call void function as an expression")
       returnHandler e = throwError e
 evalE (Node (Bop o e1 e2) loc) = do
   e1' <- evalE e1
@@ -279,7 +283,7 @@ evalS (Node (SCall ef args) _) = do
       let ids = map snd tyargs
       pushContext
       forM_ (zip ids argvals) $ \(id, v) -> declValue id v
-      catchError (evalB body) returnHandler
+      catchError (do { evalB body ; _ <- popContext ; return () }) returnHandler
     _ -> throwError (3, "Cannot call a non-function pointer")
   where
     returnHandler :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
