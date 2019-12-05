@@ -129,7 +129,7 @@ expOperators =
   , [Infix  (reservedOp "<"   >> return (nodeWrap2 (Bop Lt  ))) AssocLeft,
      Infix  (reservedOp "<="  >> return (nodeWrap2 (Bop Lte ))) AssocLeft,
      Infix  (reservedOp ">"   >> return (nodeWrap2 (Bop Gt  ))) AssocLeft,
-     Infix  (reservedOp ">"   >> return (nodeWrap2 (Bop Gte ))) AssocLeft]
+     Infix  (reservedOp ">="  >> return (nodeWrap2 (Bop Gte ))) AssocLeft]
   , [Infix  (reservedOp "=="  >> return (nodeWrap2 (Bop Eq  ))) AssocLeft,
      Infix  (reservedOp "!="  >> return (nodeWrap2 (Bop Neq ))) AssocLeft]
   , [Infix  (reservedOp "&&"  >> return (nodeWrap2 (Bop And ))) AssocLeft]
