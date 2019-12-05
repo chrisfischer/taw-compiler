@@ -11,7 +11,7 @@ import qualified Data.Map as Map
 import Control.Applicative
 import Control.Monad (liftM, liftM2)
 import Control.Monad.State
-import Control.Monad.Except (MonadError(..), ExceptT, runExceptT)
+import Control.Monad.Except
 
 data ValueTy =
     VBool Bool
@@ -27,27 +27,37 @@ data GlobalContext
 
 data FunctionContext
   = FunctionContext {
-    -- Name of function
-    fnm :: Id,
     -- Parent context
     parentCtxt :: Maybe FunctionContext
+    -- Subcontext stack
+  , currSubCtxt :: FunctionSubContext
+    -- Return value
+  , retVal :: Maybe ValueTy
+  } deriving Show
+
+data FunctionSubContext
+  = FunctionSubContext {
+    -- Parent context
+    parentSubCtxt :: Maybe FunctionSubContext
     -- Bindings for this context
   , vs :: Map.Map Id ValueTy
-  , retVal :: Maybe ValueTy
   } deriving Show
 
 -- Convienience Initializers
 
+-- | Intializes an empty function sub context with no parent
+emptyFunctionSubContext = FunctionSubContext Nothing Map.empty
+
 -- | Intializes an empty function context with no parent
-emptyFunctionContext fn = FunctionContext fn Nothing Map.empty Nothing
+emptyFunctionContext = FunctionContext Nothing emptyFunctionSubContext Nothing
 
 -- | Intializes an empty global context with no parent
-emptyGlobalContext entry = GlobalContext (emptyFunctionContext entry) Map.empty
+emptyGlobalContext = GlobalContext emptyFunctionContext Map.empty
 
 -- | Initializes context with global decls and sets functions
-gCtxtFromProg :: Id -> Prog -> Either (Int, String) GlobalContext
-gCtxtFromProg entry prog =
-  fmap (\fs -> (emptyGlobalContext entry) { fdecls = Map.fromList fs }) $
+gCtxtFromProg :: Prog -> Either (Int, String) GlobalContext
+gCtxtFromProg prog =
+  fmap (\fs -> emptyGlobalContext { fdecls = Map.fromList fs }) $
     unwrap prog
   where
     unwrap :: Prog -> Either (Int, String) [(Id, Node Fdecl)]
@@ -71,15 +81,15 @@ lookUpValue :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
                Id -> m ValueTy
 lookUpValue x = do
   curr <- gets currCtxt
-  lookUpFunCtxt x curr (fnm curr) where
-    lookUpFunCtxt :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
-                     Id -> FunctionContext -> Id -> m ValueTy
-    lookUpFunCtxt x c fid =
+  lookUpFunSubCtxt x (currSubCtxt curr)
+  where
+    lookUpFunSubCtxt :: (MonadError (Int, String) m, MonadState GlobalContext m) => Id -> FunctionSubContext -> m ValueTy
+    lookUpFunSubCtxt x c =
       case Map.lookup x $ vs c of
         Just v  -> return v
-        Nothing -> case parentCtxt c of
-          Just c' | (fnm c' == fid) -> lookUpFunCtxt x c' fid
-          _ -> do
+        Nothing -> case parentSubCtxt c of
+          Just c' -> lookUpFunSubCtxt x c'
+          Nothing -> do
             Node (Fdecl _ fn _ _) _ <- lookUpFdecl x
             return $ VFun fn
             -- TODO better errors, currently will state function not found
@@ -90,24 +100,26 @@ assignValue :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
             Id -> ValueTy -> m ()
 assignValue x v = do
   curr <- gets currCtxt
-  curr' <- setInFunCtxt x v curr (fnm curr)
-  modify $ \s -> s { currCtxt = curr' } where
-    setInFunCtxt :: MonadError (Int, String) m => Id -> ValueTy ->
-                    FunctionContext -> Id -> m FunctionContext
-    setInFunCtxt x v c fid =
+  currSub' <- setInFunSubCtxt x v (currSubCtxt curr)
+  modify $ \s -> s { currCtxt = curr { currSubCtxt = currSub' } }
+  where
+    setInFunSubCtxt :: MonadError (Int, String) m => Id -> ValueTy ->
+                       FunctionSubContext -> m FunctionSubContext
+    setInFunSubCtxt x v c =
       case Map.lookup x (vs c) of
         Just _ -> return c { vs = Map.insert x v $ vs c }
-        Nothing -> case parentCtxt c of
-          Just c' | (fnm c' == fid) -> do
-            c'' <- setInFunCtxt x v c' fid
-            return $ c { parentCtxt = Just c'' }
-          _ -> throwError (0, "Variable " ++ x ++ " not found")
+        Nothing -> case parentSubCtxt c of
+          Just c' -> do
+            c'' <- setInFunSubCtxt x v c'
+            return $ c { parentSubCtxt = Just c'' }
+          Nothing -> throwError (0, "Variable " ++ x ++ " not found")
 
 -- | Adds a new binding for the given Id in the current context
 declValue :: MonadState GlobalContext m => Id -> ValueTy -> m ()
 declValue x v = do
   curr <- gets currCtxt
-  let curr' = curr { vs = Map.insert x v (vs curr) }
+  let currSub = currSubCtxt curr
+  let curr' = curr { currSubCtxt = currSub {vs = Map.insert x v (vs currSub) } }
   modify $ \s -> s { currCtxt = curr' }
 
 setRetValue :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
@@ -120,25 +132,29 @@ setRetValue v = do
   modify $ \s -> s { currCtxt = curr' }
 
 -- | Creates a new context with the given name and the current as its parent
-pushContext :: MonadState GlobalContext m => Id -> m ()
-pushContext name = modify $ \s ->
-  s { currCtxt = (emptyFunctionContext name) {
-      parentCtxt = (Just $ currCtxt s) } }
+pushContext :: MonadState GlobalContext m => m ()
+pushContext = modify $ \s ->
+  let currCtxt' = emptyFunctionContext { parentCtxt = (Just $ currCtxt s) } in
+  s { currCtxt = currCtxt' }
 
 -- | Creates a new context with the current as its parent with the same name
 pushSubContext :: MonadState GlobalContext m => m ()
-pushSubContext = modify $ \s ->
-  s { currCtxt = (emptyFunctionContext $ fnm (currCtxt s)) {
-      parentCtxt = (Just $ currCtxt s) } }
+pushSubContext = do
+  curr <- gets currCtxt
+  let currSub = currSubCtxt curr
+  let currSub' = emptyFunctionSubContext { parentSubCtxt = Just currSub }
+  modify $ \s -> s { currCtxt = curr { currSubCtxt = currSub' } }
 
 -- | Sets the current context as the current parent and ignores the return value
-popSubContext :: MonadState GlobalContext m => m ()
+popSubContext :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
+                 m ()
 popSubContext = do
   curr <- gets currCtxt
-  let curr' = case parentCtxt curr of
-                Nothing -> curr
-                Just c  -> c
-  modify $ \s -> s { currCtxt = curr' }
+  let currSub = currSubCtxt curr
+  case parentSubCtxt currSub of
+    Just currSub' ->
+      modify $ \s -> s { currCtxt = curr { currSubCtxt = currSub' } }
+    Nothing -> throwError (13, "Cannot pop top level subcontext")
 
 -- | Sets the current context as the first parent context with a different
 -- function name
@@ -146,23 +162,11 @@ popContext :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
               m (Maybe ValueTy)
 popContext = do
   curr <- gets currCtxt
-  let f = fnm curr
-  case retVal curr of
-    Just rv -> case findDifferentParent f curr of
-      Just c' -> do
-        modify $ \s -> s { currCtxt = c' }
-        return $ Just rv
-      Nothing -> throwError (11, "Cannot pop top level context")
-    -- TODO check return type to see if void?
-    Nothing -> return Nothing -- throwError (10, "Function did not return a value")
-  where
-    findDifferentParent :: Id -> FunctionContext -> Maybe FunctionContext
-    findDifferentParent id c =
-      if fnm c == id then do
-        p <- parentCtxt c
-        p' <- findDifferentParent id p
-        return p'
-      else Just c
+  let rv = retVal curr
+  case parentCtxt curr of
+    Just curr' -> modify $ \s -> s { currCtxt = curr' }
+    Nothing -> throwError (11, "Cannot pop top level context")
+  return $ retVal curr
 
 --------------------------------------------------------------------------
 -- TODO check that function pointer types actually match
@@ -197,14 +201,19 @@ evalE (Node (Call ef args) _) = do
       argvals <- mapM evalE args
       verifyArgTypes argvals (Prelude.map fst tyargs)
       let ids = map snd tyargs
-      pushContext id
+      pushContext
       forM_ (zip ids argvals) $ \(id, v) -> declValue id v
-      evalB body
-      retv <- popContext
-      case retv of
-        Just v -> return v
-        Nothing -> throwError (10, "Function did not return a value")
+      catchError (do { evalB body ; return $ VInt 0 }) returnHandler
     _ -> throwError (3, "Cannot call a non-function pointer")
+  where
+      returnHandler :: (MonadError (Int, String) m, MonadState GlobalContext m)
+                       => (Int, String) -> m ValueTy
+      returnHandler (-1, _) = do
+        retv <- popContext
+        case retv of
+          Just v -> return v
+          Nothing -> throwError (10, "Function did not return a value")
+      returnHandler e = throwError e
 evalE (Node (Bop o e1 e2) loc) = do
   e1' <- evalE e1
   e2' <- evalE e2
@@ -240,6 +249,7 @@ evalBop o _ _ _ = throwError (2, "Invalid types for op " ++ show o)
 evalUop :: MonadError (Int, String) m => Unop -> ValueTy -> Loc -> m ValueTy
 evalUop Neg (VInt i) _ = return $ VInt (-i)
 evalUop Lognot (VBool i) _ = return $ VBool (not i)
+evalUop o _ _ = throwError (2, "Invalid types for unop " ++ show o)
 
 -- | Evaluate a statement
 evalS :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
@@ -255,8 +265,10 @@ evalS (Node (Decl (Vdecl x e)) _) = do
 evalS (Node (Ret (Just e)) _) = do
   v <- evalE e
   setRetValue $ Just v
+  throwError (-1, "Return")
 evalS (Node (Ret Nothing) _) = do
   setRetValue Nothing
+  throwError (-1, "Return")
 evalS (Node (SCall ef args) _) = do
   fv <- evalE ef
   case fv of
@@ -265,22 +277,22 @@ evalS (Node (SCall ef args) _) = do
       argvals <- mapM evalE args
       verifyArgTypes argvals (Prelude.map fst tyargs)
       let ids = map snd tyargs
-      pushContext id
+      pushContext
       forM_ (zip ids argvals) $ \(id, v) -> declValue id v
-      evalB body
-      _ <- popContext
-      return ()
+      catchError (evalB body) returnHandler
     _ -> throwError (3, "Cannot call a non-function pointer")
+  where
+    returnHandler :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
+               (Int, String) -> m ()
+    returnHandler (-1, _) = do { _ <- popContext ; return () }
+    returnHandler e = throwError e
 evalS (Node (If e b1 b2) _) = do
   v <- evalE e
   pushSubContext
   case v of
     VBool True  -> evalB b1
-    VBool False ->
-      case b2 of
-        Just b2' -> evalB b2'
-        Nothing -> return ()
-    VInt  _     -> throwError (5, "If condition must eval to bool")
+    VBool False -> evalB $ fromMaybe [noLoc Nop] b2
+    _           -> throwError (5, "If condition must eval to bool")
   popSubContext
 evalS (Node (For vs cond iter ss) loc) = do
   forM_ vs $ \(Vdecl x e) -> do
@@ -295,7 +307,7 @@ evalS w@(Node (While e ss) _) = do
   case v of
     VBool True  -> evalB (ss ++ [w])
     VBool False -> return ()
-    VInt  _     -> throwError (3, "Loop condition must eval to bool")
+    _           -> throwError (3, "Loop condition must eval to bool")
   popSubContext
 evalS (Node Nop _) = return ()
 
@@ -313,13 +325,14 @@ executeProg :: Id -> Prog -> Either (Int, String) ValueTy
 executeProg entry prog =
   let entryF = find (\(Gfdecl (Node (Fdecl _ fname _ _) _)) ->
                         fname == entry) prog
-      gCtxt = gCtxtFromProg entry prog in
+      gCtxt = gCtxtFromProg prog in
   case gCtxt of
     Right startCtxt ->
       case entryF of
         Just (Gfdecl (Node (Fdecl _ _ [] b) _)) ->
           let (res, finalCtxt) = executeBlock b startCtxt in
           case (res, retVal $ currCtxt $ finalCtxt) of
+            (Left (-1, _), Just r) -> Right r
             (Left e, _) -> Left e
             (Right _, Just r) -> Right r
             (Right _, Nothing) -> Left (10, "Function did not return a value")
