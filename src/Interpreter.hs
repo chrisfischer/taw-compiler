@@ -1,4 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# OPTIONS -fwarn-incomplete-patterns #-}
 
 module Interpreter where
 
@@ -43,6 +45,11 @@ data FunctionSubContext
   , vs :: Map.Map Id ValueTy
   } deriving Show
 
+newtype Interp a =
+  Interp { runInterp :: ExceptT (Int, String) (State GlobalContext) a }
+  deriving (Functor, Applicative,
+            Monad, MonadState GlobalContext, MonadError (Int, String) )
+
 -- Convienience Initializers
 
 -- | Intializes an empty function sub context with no parent
@@ -68,8 +75,7 @@ gCtxtFromProg prog =
 
 -- Helper functions
 
-lookUpFdecl :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
-               Id -> m (Node Fdecl)
+lookUpFdecl :: Id -> Interp (Node Fdecl)
 lookUpFdecl x = do
   fs <- gets fdecls
   case Map.lookup x fs of
@@ -77,13 +83,12 @@ lookUpFdecl x = do
     Nothing -> throwError (8, "Function " ++ x ++ " not found")
 
 -- | Looks recursively up the context stack and returns closest found value
-lookUpValue :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
-               Id -> m ValueTy
+lookUpValue :: Id -> Interp ValueTy
 lookUpValue x = do
   curr <- gets currCtxt
   lookUpFunSubCtxt x (currSubCtxt curr)
   where
-    lookUpFunSubCtxt :: (MonadError (Int, String) m, MonadState GlobalContext m) => Id -> FunctionSubContext -> m ValueTy
+    -- lookUpFunSubCtxt :: (MonadError (Int, String) m, MonadState GlobalContext m) => Id -> FunctionSubContext -> m ValueTy
     lookUpFunSubCtxt x c =
       case Map.lookup x $ vs c of
         Just v  -> return v
@@ -96,15 +101,14 @@ lookUpValue x = do
             -- throwError (0, "Variable " ++ x ++ " not found")
 
 -- | Looks recursively up the context stack and updates closest value
-assignValue :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
-            Id -> ValueTy -> m ()
+assignValue :: Id -> ValueTy -> Interp ()
 assignValue x v = do
   curr <- gets currCtxt
   currSub' <- setInFunSubCtxt x v (currSubCtxt curr)
   modify $ \s -> s { currCtxt = curr { currSubCtxt = currSub' } }
   where
-    setInFunSubCtxt :: MonadError (Int, String) m => Id -> ValueTy ->
-                       FunctionSubContext -> m FunctionSubContext
+    -- setInFunSubCtxt :: MonadError (Int, String) m => Id -> ValueTy ->
+    --                    FunctionSubContext -> m FunctionSubContext
     setInFunSubCtxt x v c =
       case Map.lookup x (vs c) of
         Just _ -> return c { vs = Map.insert x v $ vs c }
@@ -115,15 +119,14 @@ assignValue x v = do
           Nothing -> throwError (0, "Variable " ++ x ++ " not found")
 
 -- | Adds a new binding for the given Id in the current context
-declValue :: MonadState GlobalContext m => Id -> ValueTy -> m ()
+declValue :: Id -> ValueTy -> Interp ()
 declValue x v = do
   curr <- gets currCtxt
   let currSub = currSubCtxt curr
   let curr' = curr { currSubCtxt = currSub {vs = Map.insert x v (vs currSub) } }
   modify $ \s -> s { currCtxt = curr' }
 
-setRetValue :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
-               Maybe ValueTy -> m ()
+setRetValue :: Maybe ValueTy -> Interp ()
 setRetValue v = do
   curr <- gets currCtxt
   -- Node (Fdecl (RetVal retty) _ _ _) _ <- lookUpFdecl (fnm curr)
@@ -132,13 +135,13 @@ setRetValue v = do
   modify $ \s -> s { currCtxt = curr' }
 
 -- | Creates a new context with the given name and the current as its parent
-pushContext :: MonadState GlobalContext m => m ()
+pushContext :: Interp ()
 pushContext = modify $ \s ->
   let currCtxt' = emptyFunctionContext { parentCtxt = (Just $ currCtxt s) } in
   s { currCtxt = currCtxt' }
 
 -- | Creates a new context with the current as its parent with the same name
-pushSubContext :: MonadState GlobalContext m => m ()
+pushSubContext :: Interp ()
 pushSubContext = do
   curr <- gets currCtxt
   let currSub = currSubCtxt curr
@@ -146,8 +149,7 @@ pushSubContext = do
   modify $ \s -> s { currCtxt = curr { currSubCtxt = currSub' } }
 
 -- | Sets the current context as the current parent and ignores the return value
-popSubContext :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
-                 m ()
+popSubContext :: Interp ()
 popSubContext = do
   curr <- gets currCtxt
   let currSub = currSubCtxt curr
@@ -158,8 +160,7 @@ popSubContext = do
 
 -- | Sets the current context as the first parent context with a different
 -- function name
-popContext :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
-              m (Maybe ValueTy)
+popContext :: Interp (Maybe ValueTy)
 popContext = do
   curr <- gets currCtxt
   let rv = retVal curr
@@ -171,7 +172,7 @@ popContext = do
 --------------------------------------------------------------------------
 -- TODO check that function pointer types actually match
 -- | Verify that the given types match the specified types
-verifyArgTypes :: (MonadError (Int, String) m) => [ValueTy] -> [Ty] -> m ()
+verifyArgTypes :: [ValueTy] -> [Ty] -> Interp ()
 verifyArgTypes ((VInt _):xs) (TInt:ys) = verifyArgTypes xs ys
 verifyArgTypes ((VBool _):xs) (TBool:ys) = verifyArgTypes xs ys
 verifyArgTypes ((VFun _):xs) ((TRef (RFun _ _)):ys) = verifyArgTypes xs ys
@@ -179,15 +180,14 @@ verifyArgTypes [] [] = return ()
 verifyArgTypes _ _ = throwError (9, "Function call type mismatch")
 
 -- TODO combine and check function pointer types
-verifyRetTy :: (MonadError (Int, String) m) => ValueTy -> Ty -> m ()
+verifyRetTy :: ValueTy -> Ty -> Interp ()
 verifyRetTy (VInt _) TInt = return ()
 verifyRetTy (VBool _) TBool = return ()
 verifyRetTy (VFun _) (TRef (RFun _ _)) = return ()
 verifyRetTy _ _ = throwError (9, "Ret type mismatch")
 
 -- | Evaluate an expression
-evalE :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
-         Node Exp -> m ValueTy
+evalE :: Node Exp -> Interp ValueTy
 evalE (Node (CBool b) _) = return $ VBool b
 evalE (Node (CInt i) _) = return $ VInt i
 evalE (Node (Id x) _) = do
@@ -209,8 +209,7 @@ evalE (Node (Call ef args) _) = do
         returnHandler
     _ -> throwError (3, "Cannot call a non-function pointer")
   where
-      returnHandler :: (MonadError (Int, String) m, MonadState GlobalContext m)
-                       => (Int, String) -> m ValueTy
+      returnHandler :: (Int, String) -> Interp ValueTy
       returnHandler (-1, _) = do
         retv <- popContext
         case retv of
@@ -227,8 +226,7 @@ evalE (Node (Uop o e) loc) = do
   evalUop o e' loc
 
 -- | Evaluate a binary op
-evalBop :: MonadError (Int, String) m =>
-           Binop -> ValueTy -> ValueTy -> Loc -> m ValueTy
+evalBop :: Binop -> ValueTy -> ValueTy -> Loc -> Interp ValueTy
 evalBop Add  (VInt i1) (VInt i2) _ = return $ VInt (i1 + i2)
 evalBop Sub  (VInt i1) (VInt i2) _ = return $ VInt (i1 - i2)
 evalBop Mul  (VInt i1) (VInt i2) _ = return $ VInt (i1 * i2)
@@ -250,14 +248,13 @@ evalBop Or   (VBool i1) (VBool i2) _ = return $ VBool (i1 || i2)
 evalBop o _ _ _ = throwError (2, "Invalid types for op " ++ show o)
 
 -- | Evaluate a unary op
-evalUop :: MonadError (Int, String) m => Unop -> ValueTy -> Loc -> m ValueTy
+evalUop :: Unop -> ValueTy -> Loc -> Interp ValueTy
 evalUop Neg (VInt i) _ = return $ VInt (-i)
 evalUop Lognot (VBool i) _ = return $ VBool (not i)
 evalUop o _ _ = throwError (2, "Invalid types for unop " ++ show o)
 
 -- | Evaluate a statement
-evalS :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
-         Node Stmt -> m ()
+evalS :: Node Stmt -> Interp ()
 evalS (Node (Assn (Node (Id x) _) e) _) = do
   -- TODO evalId? we may need to evaluate x to find the loc to store e
   v <- evalE e
@@ -286,8 +283,7 @@ evalS (Node (SCall ef args) _) = do
       catchError (do { evalB body ; _ <- popContext ; return () }) returnHandler
     _ -> throwError (3, "Cannot call a non-function pointer")
   where
-    returnHandler :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
-               (Int, String) -> m ()
+    returnHandler :: (Int, String) -> Interp ()
     returnHandler (-1, _) = do { _ <- popContext ; return () }
     returnHandler e = throwError e
 evalS (Node (If e b1 b2) _) = do
@@ -316,14 +312,13 @@ evalS w@(Node (While e ss) _) = do
 evalS (Node Nop _) = return ()
 
 -- | Evaluate a block
-evalB :: (MonadError (Int, String) m, MonadState GlobalContext m) =>
-         Block -> m ()
+evalB :: Block -> Interp ()
 evalB = mapM_ evalS
 
 executeBlock :: Block ->
-           GlobalContext ->
-           (Either (Int, String) (), GlobalContext)
-executeBlock b gCtxt = runState (runExceptT $ evalB b) gCtxt
+                GlobalContext ->
+                (Either (Int, String) (), GlobalContext)
+executeBlock b gCtxt = runState (runExceptT $ runInterp $ evalB b) gCtxt
 
 executeProg :: Id -> Prog -> Either (Int, String) ValueTy
 executeProg entry prog =
@@ -350,9 +345,11 @@ run entry prog = do
   let r = executeProg entry prog
   putStrLn (display r)
   where
+    -- Display either the error or resulting value
     display :: (Either (Int, String) ValueTy) -> String
     display (Left (_, v))  = "Exception: " ++ v
     display (Right v) = "Result: " ++ showVType v
+    -- Display the underlying value in the value type
     showVType :: ValueTy -> String
     showVType (VInt i) = show i
     showVType (VBool b) = show b
