@@ -101,7 +101,7 @@ popScope = do
   syms <- gets scopedSymbolTable
   case parentTable syms of
     Just syms' -> modify $ \s -> s { scopedSymbolTable = syms' }
-    Nothing -> return () -- TODO throw error?
+    Nothing -> error "Cannot pop root scope"
 
 data FunctionGenState
   = FunctionGenState {
