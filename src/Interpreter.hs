@@ -55,13 +55,16 @@ newtype Interp a =
 -- Convienience Initializers
 
 -- | Intializes an empty function sub context with no parent
+emptyFunctionSubContext :: FunctionSubContext
 emptyFunctionSubContext = FunctionSubContext Nothing Map.empty
 
 -- | Intializes an empty function context with no parent
+emptyFunctionContext :: Node Fdecl -> FunctionContext
 emptyFunctionContext fdecl =
   FunctionContext fdecl Nothing emptyFunctionSubContext Nothing
 
--- | Intializes an empty global context with no parent
+-- | Intializes an empty global context
+emptyGlobalContext :: Node Fdecl -> GlobalContext
 emptyGlobalContext entry = GlobalContext (emptyFunctionContext entry) Map.empty
 
 -- | Initializes context with global decls and sets functions
@@ -114,9 +117,9 @@ assignValue x v = do
     setInFunSubCtxt :: Id -> ValueTy -> FunctionSubContext ->
                        Interp FunctionSubContext
     setInFunSubCtxt x v c =
-      case Map.lookup x (vs c) of
-        Just _ -> return c { vs = Map.insert x v $ vs c }
-        Nothing -> case parentSubCtxt c of
+      case Map.member x (vs c) of
+        True  -> return c { vs = Map.insert x v $ vs c }
+        False -> case parentSubCtxt c of
           Just c' -> do
             c'' <- setInFunSubCtxt x v c'
             return $ c { parentSubCtxt = Just c'' }
@@ -149,6 +152,17 @@ pushContext f = modify $ \s ->
   let currCtxt' = (emptyFunctionContext f) {parentCtxt = (Just $ currCtxt s)} in
   s { currCtxt = currCtxt' }
 
+  -- | Sets the current context as the first parent context with a different
+-- function name
+popContext :: Interp (Maybe ValueTy)
+popContext = do
+  curr <- gets currCtxt
+  let rv = retVal curr
+  case parentCtxt curr of
+    Just curr' -> modify $ \s -> s { currCtxt = curr' }
+    Nothing -> throwError (11, "Cannot pop top level context")
+  return $ retVal curr
+
 -- | Creates a new context with the current as its parent with the same name
 pushSubContext :: Interp ()
 pushSubContext = do
@@ -166,17 +180,6 @@ popSubContext = do
     Just currSub' ->
       modify $ \s -> s { currCtxt = curr { currSubCtxt = currSub' } }
     Nothing -> throwError (13, "Cannot pop top level subcontext")
-
--- | Sets the current context as the first parent context with a different
--- function name
-popContext :: Interp (Maybe ValueTy)
-popContext = do
-  curr <- gets currCtxt
-  let rv = retVal curr
-  case parentCtxt curr of
-    Just curr' -> modify $ \s -> s { currCtxt = curr' }
-    Nothing -> throwError (11, "Cannot pop top level context")
-  return $ retVal curr
 
 --------------------------------------------------------------------------
 
@@ -327,10 +330,10 @@ evalS (Node Nop _) = return ()
 evalB :: Block -> Interp ()
 evalB = mapM_ evalS
 
-executeBlock :: Block ->
-                GlobalContext ->
-                (Either (Int, String) (), GlobalContext)
-executeBlock b gCtxt = runState (runExceptT $ runInterp $ evalB b) gCtxt
+runBlock :: Block ->
+            GlobalContext ->
+            (Either (Int, String) (), GlobalContext)
+runBlock b gCtxt = runState (runExceptT $ runInterp $ evalB b) gCtxt
 
 executeProg :: Id -> Prog -> Either (Int, String) ValueTy
 executeProg entry prog =
@@ -341,7 +344,7 @@ executeProg entry prog =
       let gCtxt = gCtxtFromProg prog nf in
       case gCtxt of
         Right startCtxt ->
-          let (res, finalCtxt) = executeBlock b startCtxt in
+          let (res, finalCtxt) = runBlock b startCtxt in
           case (res, retVal $ currCtxt $ finalCtxt) of
             (Left (-1, _), Just r) -> Right r
             (Left e, _) -> Left e
@@ -350,7 +353,6 @@ executeProg entry prog =
         Left e -> Left e
     Just _ -> Left (6, "Entry function must not take in any arguments")
     Nothing -> Left (7, "Could not find entry function")
-
 
 
 run :: Id -> Prog -> IO ()
