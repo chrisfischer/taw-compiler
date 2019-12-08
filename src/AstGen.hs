@@ -45,8 +45,6 @@ data FunctionContext
   = FunctionContext {
     -- Type for this function
     fty :: FunTy
-    -- Used to accumulate statements top level statements
-  , fstmts :: Block
     -- Subcontext stack
   , currSubCtxt :: FunctionSubContext
   } deriving Show
@@ -76,7 +74,8 @@ execAstGenerator main fs =
   map fCtxtToFdecl $ Map.elems (contexts gCtxt')
   where
     fCtxtToFdecl :: FunctionContext -> Fdecl
-    fCtxtToFdecl (FunctionContext fty block _) = funTytoFdecl fty block
+    fCtxtToFdecl (FunctionContext fty (FunctionSubContext Nothing _ _ block)) = funTytoFdecl fty (reverse block)
+    fCtxtToFdecl _ = error "Subcontext is not root"
     funTytoFdecl :: FunTy -> Block -> Fdecl
     funTytoFdecl (FunTy fn args retty) b = Fdecl (RetVal retty) fn args b
 
@@ -91,7 +90,7 @@ emptyFunctionSubContext = FunctionSubContext Nothing Map.empty Map.empty []
 -- variables with the arguments
 emptyFunctionContext :: FunTy -> FunctionContext
 emptyFunctionContext fty@(FunTy _ args _) =
-  FunctionContext fty [] emptyFunctionSubContext {
+  FunctionContext fty emptyFunctionSubContext {
       vars = Map.fromList $ map swap args
     , tysToVars = foldr (\(ty, id) acc -> Map.alter (Just [id] <>) ty acc) Map.empty args
     }
@@ -203,6 +202,13 @@ popSubContext = do
       modifyCurrentFunctionContext curr { currSubCtxt = currSub' }
     Nothing -> error "Cannot pop top level subcontext"
   return $ stmts currSub
+
+pushStmt :: Stmt -> AstGenerator ()
+pushStmt s = do
+  curr <- currentFunctionContext
+  let currSub = currSubCtxt curr
+  let currSub' = currSub { stmts = noLoc s : (stmts currSub) }
+  modifyCurrentFunctionContext curr { currSubCtxt = currSub' }
 
 data Ctxt = Ctxt {
 --   -- lookup vars by ty string
