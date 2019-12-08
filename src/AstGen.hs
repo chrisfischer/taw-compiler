@@ -1,10 +1,20 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# OPTIONS -fwarn-incomplete-patterns #-}
+
 module AstGen where
 
-import Ast
+import Data.Maybe (fromMaybe)
+import Data.Tuple (swap)
+
+import Control.Applicative
 import Control.Monad
+import Control.Monad.State
+
 import Test.QuickCheck
 import Test.QuickCheck.Gen
-import Data.Map as Map
+import qualified Data.Map as Map
+
+import Ast
 
 --------------------------------------
 -- UTILS - ---------------------------
@@ -12,15 +22,197 @@ import Data.Map as Map
 
 nol x = noLoc <$> x
 
+emptyFdecl r fn as = Fdecl r fn as []
+
+-- Name, arg types and names, return type (must not be void)
+data FunTy = FunTy Id [(Ty, Id)] Ty deriving Show
 
 --------------------------------------
 -- CONTEXT ---------------------------
 --------------------------------------
 
-data Ctxt = Ctxt {vars :: Map String [String], -- lookup vars by ty string
-                  funs :: Map String [String], -- lookup functions by retty string
-                  funTypes :: Map String Rty , -- lookup functions Rtys by id
-                  currentFun :: String       }
+data GlobalContext
+  = GlobalContext {
+    -- Function currently being generated
+    currentFun :: Id
+    -- Map from function name to its context
+  , contexts :: Map.Map Id FunctionContext
+    -- Map from retty to function type
+  , funs :: Map.Map Ty FunTy
+  } deriving Show
+
+data FunctionContext
+  = FunctionContext {
+    -- Type for this function
+    fty :: FunTy
+    -- Used to accumulate statements top level statements
+  , fstmts :: Block
+    -- Subcontext stack
+  , currSubCtxt :: FunctionSubContext
+  } deriving Show
+
+data FunctionSubContext
+  = FunctionSubContext {
+    -- Parent context
+    parentSubCtxt :: Maybe FunctionSubContext
+    -- Declared vars
+  , vars :: Map.Map Id Ty
+    -- Map from each type to vars of that type declared in this scope
+  , tysToVars :: Map.Map Ty [Id]
+    -- Accumulated statements in this scope
+  , stmts :: Block
+  } deriving Show
+
+
+newtype AstGenerator a =
+  AstGenerator { runAstGenerator :: State GlobalContext a }
+  deriving (Functor, Applicative, Monad, MonadState GlobalContext)
+
+execAstGenerator :: FunTy -> [FunTy] -> [Fdecl]
+execAstGenerator main fs =
+  let gCtxt = initGlobalContext main fs
+  -- TODO actually implement the monad to generate instead of (return ())
+      gCtxt' = execState (runAstGenerator (return ())) gCtxt in
+  map fCtxtToFdecl $ Map.elems (contexts gCtxt')
+  where
+    fCtxtToFdecl :: FunctionContext -> Fdecl
+    fCtxtToFdecl (FunctionContext fty block _) = funTytoFdecl fty block
+    funTytoFdecl :: FunTy -> Block -> Fdecl
+    funTytoFdecl (FunTy fn args retty) b = Fdecl (RetVal retty) fn args b
+
+
+-- Convienience Initializers
+
+-- | Intializes an empty function sub context with no parent
+emptyFunctionSubContext :: FunctionSubContext
+emptyFunctionSubContext = FunctionSubContext Nothing Map.empty Map.empty []
+
+-- | Intializes an empty function context with no parent, initalizes declared
+-- variables with the arguments
+emptyFunctionContext :: FunTy -> FunctionContext
+emptyFunctionContext fty@(FunTy _ args _) =
+  FunctionContext fty [] emptyFunctionSubContext {
+      vars = Map.fromList $ map swap args
+    , tysToVars = foldr (\(ty, id) acc -> Map.alter (Just [id] <>) ty acc) Map.empty args
+    }
+
+-- | Intializes an empty global context
+initGlobalContext :: FunTy -> [FunTy] -> GlobalContext
+initGlobalContext main@(FunTy fn _ _) fs =
+  let fs' = main : fs in
+  let fds = Map.fromList $ map (\f@(FunTy _ _ retty) -> (retty, f)) fs'
+      ctxts = Map.fromList $
+        map (\f@(FunTy fn _ _) -> (fn, emptyFunctionContext f)) fs'
+  in
+  GlobalContext fn ctxts fds
+
+
+-- Helper functions
+
+currentFunctionContext :: AstGenerator FunctionContext
+currentFunctionContext = do
+  c <- gets currentFun
+  ctxts <- gets contexts
+  case Map.lookup c ctxts of
+    Just x -> return x
+    Nothing -> error $ "No such function context: " ++ show c
+
+-- | Sets the current function name to the given name
+setCurrentFun :: Id -> AstGenerator ()
+setCurrentFun funName = do
+  modify $ \s -> s { currentFun = funName }
+
+-- | Sets the contents of the current function context to the given state
+modifyCurrentFunctionContext :: FunctionContext -> AstGenerator ()
+modifyCurrentFunctionContext f = do
+  activeName <- gets currentFun
+  modify $ \s -> s { contexts = Map.insert activeName f (contexts s) }
+
+-- | Looks for a function declaration with the given name
+lookUpFunTy :: Ty -> AstGenerator (Maybe FunTy)
+lookUpFunTy x = do
+  fs <- gets funs
+  return $ Map.lookup x fs
+
+-- | Looks recursively up the context stack and merges var decls
+inScopeVars :: AstGenerator (Map.Map Id Ty)
+inScopeVars = do
+  curr <- currentFunctionContext
+  return $ accVars $ currSubCtxt curr
+  where
+    accVars :: FunctionSubContext -> Map.Map Id Ty
+    accVars c =
+      let pvars = case parentSubCtxt c of
+                    Just c' -> accVars c'
+                    Nothing -> Map.empty in
+      Map.unionWith (+) pvars (vars c)
+
+-- | Looks recursively up the context stack and
+inScopeTysToVars :: AstGenerator (Map.Map Ty [Id])
+inScopeTysToVars = do
+  curr <- currentFunctionContext
+  return $ accVars $ currSubCtxt curr
+  where
+    accVars :: FunctionSubContext -> Map.Map Ty [Id]
+    accVars c =
+      let pvars = case parentSubCtxt c of
+                    Just c' -> accVars c'
+                    Nothing -> Map.empty in
+      mergeMaps pvars (tysToVars c)
+    mergeMaps :: Map.Map k [a] -> Map.Map k [a] -> Map.Map k [a]
+    mergeMaps m1 m2 =
+      Map.foldrWithKey (\k v acc -> Map.alter (Just v <>) k acc) m1 m2
+
+-- | Looks recursively up the context stack and returns closest found value
+inScopeVarsWithType :: Ty -> AstGenerator [Id]
+inScopeVarsWithType ty = do
+  curr <- currentFunctionContext
+  return $ accVars ty $ currSubCtxt curr
+  where
+    accVars :: Ty -> FunctionSubContext -> [Id]
+    accVars ty c =
+      fromMaybe [] $ (Map.lookup ty (tysToVars c)) <|> (fmap (accVars ty) (parentSubCtxt c))
+
+-- | Adds a new binding for the given Id in the current context
+declVar :: Id -> Ty -> AstGenerator ()
+declVar x ty = do
+  curr <- currentFunctionContext
+  let currSub = currSubCtxt curr
+  let vars' = Map.insert x ty (vars currSub)
+  let tysToVars' = Map.alter (Just [x] <>) ty (tysToVars currSub)
+  modifyCurrentFunctionContext curr {
+    currSubCtxt = currSub {
+      vars = vars', tysToVars = tysToVars' } }
+
+-- | Creates a new context with the current as its parent with the same name
+pushSubContext :: AstGenerator ()
+pushSubContext = do
+  curr <- currentFunctionContext
+  let currSub = currSubCtxt curr
+  let currSub' = emptyFunctionSubContext { parentSubCtxt = Just currSub }
+  modifyCurrentFunctionContext curr { currSubCtxt = currSub' }
+
+-- | Sets the current context as the current parent and returns the accumulated
+-- block
+popSubContext :: AstGenerator Block
+popSubContext = do
+  curr <- currentFunctionContext
+  let currSub = currSubCtxt curr
+  case parentSubCtxt currSub of
+    Just currSub' ->
+      modifyCurrentFunctionContext curr { currSubCtxt = currSub' }
+    Nothing -> error "Cannot pop top level subcontext"
+  return $ stmts currSub
+
+data Ctxt = Ctxt {
+--   -- lookup vars by ty string
+--   vars :: Map.Map String [String]
+--   -- lookup functions by retty string
+-- , funs :: Map.Map String [String]
+--   -- lookup functions Rtys by id
+-- , funTypes :: Map.Map String Rty
+-- -- , currentFun :: String
+}
 
 -- helpers
 idsOfType :: String -> Ctxt -> [Exp]
@@ -36,14 +228,14 @@ funsOfType t c =
     Just funs -> funs
 
 currentRetty :: Ctxt -> Retty
-currentRetty c = let RFun _ retty = funTypes c ! (currentFun c) in retty
+currentRetty c = let RFun _ retty = funTypes c (Map.!) (currentFun c) in retty
 
 -- test contexts
 myC :: Ctxt
-myC = Ctxt (insert "TBool" ["bool1", "bool2"] 
-             (insert "TInt" ["int1", "int2"] empty))
-           (insert "TBool" ["fBool"] empty)
-           (insert "fBool" (RFun [TBool, TBool] (RetVal TBool)) empty)
+myC = Ctxt (Map.insert "TBool" ["bool1", "bool2"]
+             (Map.insert "TInt" ["int1", "int2"] Map.empty))
+           (Map.insert "TBool" ["fBool"] Map.empty)
+           (Map.insert "fBool" (RFun [TBool, TBool] (RetVal TBool)) Map.empty)
            ""
 
 --------------------------------------
@@ -163,16 +355,16 @@ genRty' :: Int -> Gen Rty
 genRty' n = liftM2 RFun (listOf $ genTy' n) genRetty
 
 genRetty :: Gen Retty
-genRetty = 
+genRetty =
   oneof $ return <$> [RetVoid     ,
                       RetVal TInt ,
                       RetVal TBool]
 
 -- | old version could return function types, but didn't make sense
 -- genRetty' :: Int -> Gen Retty
--- genRetty' n = 
---  frequency [(4, RetVal <$> (genTy' n)), 
---             (1, return RetVoid       )] 
+-- genRetty' n =
+--  frequency [(4, RetVal <$> (genTy' n)),
+--             (1, return RetVoid       )]
 
 
 --------------------------------------
@@ -201,7 +393,7 @@ genStmt' c 0 =
                Just idGen -> [liftM2 Assn (nol idGen) (genNodeExp c)] in
   let ret = case currentRetty c of
               RetVoid   -> []
-              RetVal ty -> [fmap Ret (nol $ genExpOfType c ty)] in
+              RetVal ty -> [fmap (Ret . Just) (nol $ genExpOfType c ty)] in
   oneof $ vdecl ++ assn ++ ret
 
 {--
@@ -225,10 +417,10 @@ genBlock' n | n > 0 =
   where n' = n `div` 2
 
 genStmt' :: Vars -> Int -> Gen Stmt
-genStmt' vars 0 = 
+genStmt' vars 0 =
   oneof [liftM2 Assn genNodeExp genNodeExp            ,
          fmap   Decl genVdecl                         ,
-         fmap   Ret  genNodeExp                       , 
+         fmap   Ret  genNodeExp                       ,
          liftM3 If   genNodeEx genBlock genBlock      ,
          liftM4 For  (listOf genVdecl) genMaybeNodeExp
                      genMaybeNodeStmt  genBlock       ]
