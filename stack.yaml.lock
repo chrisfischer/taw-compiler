@@ -18,6 +18,13 @@ packages:
       sha256: 537616dec1351bd9f7905182f82f132359cf3058ebbb059c03b4edcef04b2689
   original:
     hackage: llvm-hs-9.0.1
+- completed:
+    hackage: string-random-0.1.2.0@sha256:db4f801dec1ec72cba7d662b9774da60ff54de6d05478e94478d6d730dc5034f,2439
+    pantry-tree:
+      size: 489
+      sha256: 21c7e61fceea98d14b453fc74c947b715ce33fe4c665c65b1f28c6f417d4ab7e
+  original:
+    hackage: string-random-0.1.2.0
 snapshots:
 - completed:
     size: 525663
