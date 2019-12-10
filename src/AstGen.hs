@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# OPTIONS -fwarn-incomplete-patterns #-}
 
@@ -62,9 +63,9 @@ data FunctionSubContext
   } deriving Show
 
 
-newtype AstGenerator a =
-  AstGenerator { runAstGenerator :: State GlobalContext a }
-  deriving (Functor, Applicative, Monad, MonadState GlobalContext)
+-- newtype AstGenerator a =
+  --   AstGenerator { runAstGenerator :: QCT.GenT (State GlobalContext) a }
+  --   deriving (Functor, Applicative, Monad, QCT.MonadGen, MonadState GlobalContext)
 
 execAstGenerator :: FunTy -> [FunTy] -> [Fdecl]
 execAstGenerator main fs =
@@ -108,7 +109,8 @@ initGlobalContext main@(FunTy fn _ _) fs =
 
 -- Helper functions
 
-currentFunctionContext :: AstGenerator FunctionContext
+currentFunctionContext :: (QCT.MonadGen m, MonadState GlobalContext m) =>
+                          m FunctionContext
 currentFunctionContext = do
   c <- gets currentFun
   ctxts <- gets contexts
@@ -117,24 +119,26 @@ currentFunctionContext = do
     Nothing -> error $ "No such function context: " ++ show c
 
 -- | Sets the current function name to the given name
-setCurrentFun :: Id -> AstGenerator ()
+setCurrentFun :: (QCT.MonadGen m, MonadState GlobalContext m) => Id -> m ()
 setCurrentFun funName = do
   modify $ \s -> s { currentFun = funName }
 
 -- | Sets the contents of the current function context to the given state
-modifyCurrentFunctionContext :: FunctionContext -> AstGenerator ()
+modifyCurrentFunctionContext :: (QCT.MonadGen m, MonadState GlobalContext m) =>
+                                FunctionContext -> m ()
 modifyCurrentFunctionContext f = do
   activeName <- gets currentFun
   modify $ \s -> s { contexts = Map.insert activeName f (contexts s) }
 
 -- | Looks for a function declaration with the given name
-lookUpFunTy :: Ty -> AstGenerator (Maybe FunTy)
+lookUpFunTy :: (QCT.MonadGen m, MonadState GlobalContext m) =>
+               Ty -> m (Maybe FunTy)
 lookUpFunTy x = do
   fs <- gets funs
   return $ Map.lookup x fs
 
 -- | Looks recursively up the context stack and merges var decls
-inScopeVars :: AstGenerator (Map.Map Id Ty)
+inScopeVars :: (QCT.MonadGen m, MonadState GlobalContext m) => m (Map.Map Id Ty)
 inScopeVars = do
   curr <- currentFunctionContext
   return $ accVars $ currSubCtxt curr
@@ -147,7 +151,8 @@ inScopeVars = do
       Map.unionWith (+) pvars (vars c)
 
 -- | Looks recursively up the context stack and
-inScopeTysToVars :: AstGenerator (Map.Map Ty [Id])
+inScopeTysToVars :: (QCT.MonadGen m, MonadState GlobalContext m) =>
+                    m (Map.Map Ty [Id])
 inScopeTysToVars = do
   curr <- currentFunctionContext
   return $ accVars $ currSubCtxt curr
@@ -163,7 +168,8 @@ inScopeTysToVars = do
       Map.foldrWithKey (\k v acc -> Map.alter (Just v <>) k acc) m1 m2
 
 -- | Looks recursively up the context stack and returns closest found value
-inScopeVarsWithType :: Ty -> AstGenerator [Id]
+inScopeVarsWithType :: (QCT.MonadGen m, MonadState GlobalContext m) =>
+                       Ty -> m [Id]
 inScopeVarsWithType ty = do
   curr <- currentFunctionContext
   return $ accVars ty $ currSubCtxt curr
@@ -173,7 +179,8 @@ inScopeVarsWithType ty = do
       fromMaybe [] $ (Map.lookup ty (tysToVars c)) <|> (fmap (accVars ty) (parentSubCtxt c))
 
 -- | Adds a new binding for the given Id in the current context
-declVar :: Id -> Ty -> AstGenerator ()
+declVar :: (QCT.MonadGen m, MonadState GlobalContext m) =>
+           Id -> Ty -> m ()
 declVar x ty = do
   curr <- currentFunctionContext
   let currSub = currSubCtxt curr
@@ -184,7 +191,7 @@ declVar x ty = do
       vars = vars', tysToVars = tysToVars' } }
 
 -- | Creates a new context with the current as its parent with the same name
-pushSubContext :: AstGenerator ()
+pushSubContext :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
 pushSubContext = do
   curr <- currentFunctionContext
   let currSub = currSubCtxt curr
@@ -193,7 +200,7 @@ pushSubContext = do
 
 -- | Sets the current context as the current parent and returns the accumulated
 -- block
-popSubContext :: AstGenerator Block
+popSubContext :: (QCT.MonadGen m, MonadState GlobalContext m) => m Block
 popSubContext = do
   curr <- currentFunctionContext
   let currSub = currSubCtxt curr
@@ -203,7 +210,7 @@ popSubContext = do
     Nothing -> error "Cannot pop top level subcontext"
   return $ stmts currSub
 
-pushStmt :: Stmt -> AstGenerator ()
+pushStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => Stmt -> m ()
 pushStmt s = do
   curr <- currentFunctionContext
   let currSub = currSubCtxt curr
