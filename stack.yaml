@@ -33,7 +33,9 @@ packages: ['.']
 extra-deps:
 - llvm-hs-pure-9.0.0
 - llvm-hs-9.0.1
-- string-random-0.1.2.0 
+- string-random-0.1.2.0
+- QuickCheck-GenT-0.2.2
+
 # Dependency packages to be pulled from upstream that are not in the resolver.
 # These entries can reference officially published versions as well as
 # forks / in-progress versions pinned to a git hash. For example:

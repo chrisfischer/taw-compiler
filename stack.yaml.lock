@@ -25,6 +25,13 @@ packages:
       sha256: 21c7e61fceea98d14b453fc74c947b715ce33fe4c665c65b1f28c6f417d4ab7e
   original:
     hackage: string-random-0.1.2.0
+- completed:
+    hackage: QuickCheck-GenT-0.2.2@sha256:a07dbc72e88bb27fcd0946cc51f5204d616114decfb3a67957bf4b56c7fea1fb,1435
+    pantry-tree:
+      size: 293
+      sha256: fd2bc1a0b05e40e35ad34a94759f499eff5da5b3a73c0a991483b0e4d3c7ede5
+  original:
+    hackage: QuickCheck-GenT-0.2.2
 snapshots:
 - completed:
     size: 525663
