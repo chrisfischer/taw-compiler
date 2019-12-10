@@ -13,6 +13,7 @@ import Control.Monad.State
 
 import Test.QuickCheck
 import Test.QuickCheck.Gen
+import qualified QuickCheck.GenT as QCT
 import qualified Data.Map as Map
 
 import Ast
