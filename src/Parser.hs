@@ -11,6 +11,7 @@ import Control.Monad
 import System.Directory (doesDirectoryExist, getDirectoryContents)
 
 import Ast
+import PrettyAst (renderProg)
 
 -----------------------------
 -- UTILS --------------------
@@ -22,6 +23,11 @@ printFile :: String -> IO ()
 printFile fname = do
   s <- readFile fname
   print s
+
+ppFile :: FilePath -> IO ()
+ppFile fname = do
+  p <- parseFile fname
+  putStr $ renderProg p
 
 parseString :: String -> String -> IO Prog
 parseString s filePath =
