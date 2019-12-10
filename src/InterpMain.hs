@@ -13,3 +13,7 @@ main = do
   p <- parseFile fileName
   run "main" p
 
+
+main2 fileName = do
+  p <- parseFile fileName
+  run "main" p
