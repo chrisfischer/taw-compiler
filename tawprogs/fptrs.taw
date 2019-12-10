@@ -1,4 +1,4 @@
-void printInt(int i);
+// void printInt(int i);
 
 int add(int x, int y) {
   var z = x + y;
@@ -20,7 +20,7 @@ int main() {
   while (i > 0) {
     sum = sum + map(z, 1, 2);
     i = i - 1;
-    printInt(sum);
+    // printInt(sum);
   }
   return sum;
 }

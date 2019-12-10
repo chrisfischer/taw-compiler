@@ -1,9 +1,37 @@
 
-// Should return 55
-int main() {
+int iter(int range) {
   var total = 0;
-  for (var i = 1, var j = 1; i <= 10; i = i + 1;) {
+  for (var i = 1, var j = 1; i <= range; i = i + 1;) {
     total = total + i + j;
   }
+  return total;
+}
+
+int rec(int count, int acc) {
+  if (count == 0) {
+    return acc;
+  } else {
+    return rec(count - 1, acc + 1);
+  }
+}
+
+int whle(int count) {
+  var acc = 0;
+  while(true) {
+    acc = acc + 1;
+    if (acc >= count) {
+      return acc;
+    }
+  }
+  return acc;
+}
+
+void f() {
+}
+
+// Should return 65
+int main() {
+  var total = rec(10, 0) + iter(10) + whle(10);
+  f();
   return total;
 }
