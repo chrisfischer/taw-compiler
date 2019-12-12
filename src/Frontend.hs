@@ -224,11 +224,11 @@ extractDeclTy (T.Gfext (T.Node (T.Fext retty name args) _)) = do
 extractTypes :: T.Prog -> L.FunctionTypeContext
 extractTypes p = L.execFunctionTypeGen $ mapM_ extractDeclTy p
 
+cmpProg :: T.Prog -> L.LLVM ()
+cmpProg p = do
+  let ctxt = extractTypes p
+  mapM_ (cmpDecl ctxt) p
+
 -- | Compile a Taw program
 execCmp :: String -> T.Prog -> AST.Module
 execCmp modName p = L.runLLVM (L.emptyModule (idToShortBS modName)) $ cmpProg p
-  where
-    cmpProg :: T.Prog -> L.LLVM ()
-    cmpProg p = do
-      let ctxt = extractTypes p
-      mapM_ (cmpDecl ctxt) p

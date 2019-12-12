@@ -43,10 +43,17 @@ emptyModule fileName = AST.defaultModule {
   , AST.moduleSourceFileName = fileName
   }
 
--- | Append a new declaration to the current module
+-- | Append a new declaration to the current module if no such decl already
+-- exists, helpful for JIT
 addDefn :: AST.Definition -> LLVM ()
-addDefn d = do
-  modify $ \s -> s { AST.moduleDefinitions = AST.moduleDefinitions s ++ [d] }
+addDefn d@(AST.GlobalDefinition gd) = do
+  defs <- gets AST.moduleDefinitions
+  if any (\(AST.GlobalDefinition gd') -> name gd' == name gd) defs then
+    return ()
+  else
+    modify $ \s -> s { AST.moduleDefinitions = AST.moduleDefinitions s ++ [d] }
+addDefn _ = error "Unsupported global definition type"
+
 
 -- | Define a new function
 define :: AST.Type
@@ -83,6 +90,7 @@ data ScopedSymbolTable
   = ScopedSymbolTable {
     -- Parent Symbol Table
     parentTable :: Maybe ScopedSymbolTable
+    -- Map from ids to llvm operands
   , symbolTable :: Map.Map ShortByteString AST.Operand
   } deriving (Show, Eq)
 

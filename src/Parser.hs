@@ -58,14 +58,14 @@ parseAllFiles dir = do
     print name >> parseFile (dir ++ "/" ++ name)
 
 parseTawFiles :: IO ()
-parseTawFiles = parseAllFiles "../tawprogs"
+parseTawFiles = parseAllFiles "./tawprogs"
 
 parseTawFile :: String -> IO Prog
 parseTawFile name = parseFile $ "./tawprogs/" ++ name
 
 -- AST Utils
 
--- | Converts an m of a to a list of Ast.Node a
+-- | Converts an m of a to an m of Ast.Node a
 nodeMap :: Monad m => m a -> m (Ast.Node a)
 nodeMap = (noLoc <$>)
 

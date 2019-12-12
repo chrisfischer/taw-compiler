@@ -75,6 +75,30 @@ executable qc_test
     , QuickCheck           >= 2.13
 
 
+executable tawrepl
+  default-language:    Haskell2010
+  main-is:             JITMain.hs
+  hs-source-dirs:      src
+  other-modules:
+    Ast
+    Frontend
+    LLVMGen
+    Parser
+    JIT
+  build-depends:
+      base                 >= 4.7 && <5
+    , haskeline            >= 0.7.5.0
+    , llvm-hs              >= 9.0.1
+    , llvm-hs-pure         >= 9.0.0
+    , parsec               >= 3.1
+    , mtl                  >= 2.1.3
+    , transformers         >= 0.3.0.0 && < 0.6
+    , containers           >= 0.4
+    , bytestring           >= 0.10
+    , filepath             >= 1.4.2.1
+    , directory            >= 1.3.3.0
+
+
 -- executable comparison_test
 --   default-language:    Haskell2010
 --   main-is:             ComparisonTest.hs
