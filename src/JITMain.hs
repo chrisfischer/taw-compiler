@@ -66,20 +66,16 @@ removeDefinition id m =
     include (AST.GlobalDefinition g) = G.name g /= (AST.Name $ idToShortBS id)
     include _ = True
 
-nameFromDecl :: T.Decl -> String
-nameFromDecl (T.Gfdecl (T.Node (T.Fdecl _ id _ _) _)) = id
-nameFromDecl (T.Gfext (T.Node (T.Fext _ id _) _)) = id
-
 removeDefinitionProg :: String -> T.Prog -> T.Prog
-removeDefinitionProg id p = filter ((/= id) . nameFromDecl) p
+removeDefinitionProg id p = filter ((/= id) . T.nameFromDecl) p
 
 jitProg :: LoopContext -> T.Prog -> LoopContext
 jitProg ctxt p = ctxt { llmod = newast, fs = p ++ noDefsProg }
   where
     noDefs =
-      foldr (\d acc -> removeDefinition (nameFromDecl d) acc) (llmod ctxt) p
+      foldr (\d acc -> removeDefinition (T.nameFromDecl d) acc) (llmod ctxt) p
     noDefsProg =
-      foldr (\d acc -> removeDefinitionProg (nameFromDecl d) acc) (fs ctxt) p
+      foldr (\d acc -> removeDefinitionProg (T.nameFromDecl d) acc) (fs ctxt) p
     newast  = L.runLLVM noDefs $ cmpProg p
 
 jitStmt :: LoopContext -> T.Stmt -> LoopContext

@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS -fwarn-incomplete-patterns #-}
 
 module Interpreter where
@@ -198,33 +199,21 @@ verifyValTy (VFun id) (TRef (RFun tys1 retty1)) = do
     throwError (9, "Function type mismatch")
 verifyValTy _ _ = throwError (9, "Type mismatch")
 
+-- | Error to be thrown to exit out of function due to an early return statement
+returnError :: (Int, String)
+returnError = (-1, "Return")
+
 -- | Evaluate an expression
 evalE :: Node Exp -> Interp ValueTy
 evalE (Node (CBool b) _) = return $ VBool b
 evalE (Node (CInt i) _) = return $ VInt i
 evalE (Node (Id x) _) = lookUpValue x
-evalE (Node (Call ef args) _) = do
-  fv <- evalE ef
-  case fv of
-    VFun id -> do
-      nf@(Node (Fdecl _ _ tyargs body) _) <- lookUpFdecl id
-      argvals <- mapM evalE args
-      verifyArgTypes argvals (Prelude.map fst tyargs)
-      let ids = map snd tyargs
-      pushContext nf
-      mapM_ (uncurry declValue) (zip ids argvals)
-      catchError (do {
-          evalB body
-        ; throwError (10, "Cannot call void function as an expression") })
-        returnHandler
-    _ -> throwError (3, "Cannot call a non-function pointer")
+evalE (Node (Call ef args) _) = evalCall ef args returnHandler
   where
-      returnHandler :: (Int, String) -> Interp ValueTy
-      returnHandler (-1, _) = do
-        retv <- popContext
-        maybe (throwError (10, "Cannot call void function as an expression"))
-          return retv
-      returnHandler e = throwError e
+    returnHandler :: Maybe ValueTy -> Interp ValueTy
+    returnHandler (Just v) = return v
+    returnHandler Nothing =
+      throwError (10, "Cannot call void function as an expression")
 evalE (Node (Bop o e1 e2) loc) = do
   e1' <- evalE e1
   e2' <- evalE e2
@@ -274,26 +263,11 @@ evalS (Node (Decl (Vdecl x e)) _) = do
 evalS (Node (Ret (Just e)) _) = do
   v <- evalE e
   setRetValue $ Just v
-  throwError (-1, "Return")
+  throwError returnError
 evalS (Node (Ret Nothing) _) = do
   setRetValue Nothing
-  throwError (-1, "Return")
-evalS (Node (SCall ef args) _) = do
-  fv <- evalE ef
-  case fv of
-    VFun id -> do
-      nf@(Node (Fdecl _ _ tyargs body) _) <- lookUpFdecl id
-      argvals <- mapM evalE args
-      verifyArgTypes argvals (Prelude.map fst tyargs)
-      let ids = map snd tyargs
-      pushContext nf
-      mapM_ (uncurry declValue) (zip ids argvals)
-      catchError (do { evalB body ; void popContext }) returnHandler
-    _ -> throwError (3, "Cannot call a non-function pointer")
-  where
-    returnHandler :: (Int, String) -> Interp ()
-    returnHandler (-1, _) = void popContext
-    returnHandler e = throwError e
+  throwError returnError
+evalS (Node (SCall ef args) _) = void $ evalCall ef args return
 evalS (Node (If e b1 b2) _) = do
   v <- evalE e
   pushSubContext
@@ -319,6 +293,28 @@ evalS w@(Node (While e ss) _) = do
   popSubContext
 evalS (Node Nop _) = return ()
 
+-- | Evaluate a call, used for both expression calls and statement calls.
+-- Passes the optional return value to the handler and returns the handler
+-- result.
+evalCall :: forall a. Ast.Node Ast.Exp -> [Ast.Node Ast.Exp] ->
+            (Maybe ValueTy -> Interp a) -> Interp a
+evalCall ef args returnHandler = do
+  fv <- evalE ef
+  case fv of
+    VFun id -> do
+      nf@(Node (Fdecl _ _ tyargs body) _) <- lookUpFdecl id
+      argvals <- mapM evalE args
+      verifyArgTypes argvals (Prelude.map fst tyargs)
+      let ids = map snd tyargs
+      pushContext nf
+      mapM_ (uncurry declValue) (zip ids argvals)
+      catchError (do { evalB body ; returnErrorHandler returnError }) returnErrorHandler
+    _ -> throwError (3, "Cannot call a non-function pointer")
+  where
+    returnErrorHandler :: (Int, String) -> Interp a
+    returnErrorHandler (-1, _) = popContext >>= returnHandler
+    returnErrorHandler e = throwError e
+
 -- | Evaluate a block
 evalB :: Block -> Interp ()
 evalB = mapM_ evalS
@@ -330,8 +326,7 @@ runBlock = runState . runExceptT . runInterp . evalB
 
 executeProg :: Id -> Prog -> Either (Int, String) ValueTy
 executeProg entry prog =
-  let entryF = find (\(Gfdecl (Node (Fdecl _ fname _ _) _)) ->
-                        fname == entry) prog in
+  let entryF = find (\g -> nameFromDecl g == entry) prog in
   case entryF of
     Just (Gfdecl nf@(Node (Fdecl _ _ [] b) _)) ->
       let gCtxt = gCtxtFromProg prog nf in

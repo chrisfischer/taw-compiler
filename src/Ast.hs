@@ -99,3 +99,8 @@ type Prog = [Decl]
 -- | Name of the function the interpreter and compiler will start at
 entryFunctionName :: Id
 entryFunctionName = "main"
+
+-- | Returns the function name from a global decl
+nameFromDecl :: Decl -> String
+nameFromDecl (Gfdecl (Node (Fdecl _ id _ _) _)) = id
+nameFromDecl (Gfext (Node (Fext _ id _) _)) = id
