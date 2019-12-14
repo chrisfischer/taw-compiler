@@ -9,9 +9,11 @@ import Parser (parseFile)
 main :: IO ()
 main = do
   args <- getArgs
-  let fileName = head args
-  p <- parseFile fileName
-  run "main" p
+  case args of
+    [] -> putStrLn "error: no input files"
+    (fileName : _) -> do
+      p <- parseFile fileName
+      run entryFunctionName p
 
 
 main2 fileName = do

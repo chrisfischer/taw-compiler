@@ -21,8 +21,10 @@ writeLLVM fileName ast = C.withContext $ \ctx ->
 main :: IO ()
 main = do
   args <- getArgs
-  let fileName = head args
-  p <- parseFile fileName
-  let ll = execCmp fileName p
-  let newFileName = (fst $ splitExtension fileName) ++ ".ll"
-  writeLLVM newFileName ll
+  case args of
+    [] -> putStrLn "error: no input files"
+    (fileName : _) -> do
+      p <- parseFile fileName
+      let ll = execCmp fileName p
+      let newFileName = fst (splitExtension fileName) ++ ".ll"
+      writeLLVM newFileName ll
