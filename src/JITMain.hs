@@ -1,9 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Main where
 
 import Control.Monad.Trans
+import Control.Monad.State
+
 import System.IO
 import System.Environment
 import System.Console.Haskeline
@@ -21,17 +23,14 @@ import qualified LLVMGen as L
 import qualified Ast as T
 import qualified Parser as P
 
-initModule :: AST.Module
-initModule = L.emptyModule "module"
-
-parseString :: String -> Either ParseError T.Prog
-parseString s = parse P.langParser "" s
+parseProg :: String -> Either ParseError T.Prog
+parseProg = parse P.langParser ""
 
 parseStmt :: String -> Either ParseError T.Stmt
-parseStmt s = parse P.stmt "" s
+parseStmt = parse P.stmt ""
 
 parseExpr :: String -> Either ParseError T.Exp
-parseExpr s = fmap (\(T.Node e _) -> e) (parse P.exp "" s)
+parseExpr s = T.elt <$> parse P.exp "" s
 
 data LoopContext
   = LoopContext {
@@ -39,88 +38,118 @@ data LoopContext
       llmod :: AST.Module
       -- Accumulated main statements
       , mainStmts :: [T.Stmt]
-      -- Functions
+      -- Declared functions, needed for the types when compiling new statements
     , fs :: [T.Decl]
     , verbose :: Bool
     } deriving Show
 
+-- | Empty context, defaults to verbose = False
 emptyLoopContext :: LoopContext
-emptyLoopContext = LoopContext initModule [] [] False
+emptyLoopContext = LoopContext (L.emptyModule "module") [] [] False
 
+-- | Append a statement to the end of the main function's block
+addMainStmt :: (MonadState LoopContext) m => T.Stmt -> m ()
+addMainStmt s = do
+  ctxt <- get
+  put ctxt { mainStmts = mainStmts ctxt ++ [s] }
 
--- liftError :: ExceptT String IO a -> IO a
--- liftError = runExceptT >=> either fail return
-
--- Helper that creates a main function from the list of statements
-mainFromStmts :: [T.Stmt] -> T.Retty -> T.Prog
-mainFromStmts ss retty = [main]
+-- | Remove any LLVM function with the given name
+removeDefinitionLL :: (MonadState LoopContext) m => String -> m ()
+removeDefinitionLL id = do
+  m <- gets llmod
+  let m' = m {
+    AST.moduleDefinitions = filter include (AST.moduleDefinitions m) }
+  modify $ \s -> s { llmod = m' }
   where
-    main = T.Gfdecl (T.noLoc $ T.Fdecl retty T.entryFunctionName [] ss')
-    ss' = map T.noLoc ss
-
-removeDefinition :: String -> AST.Module -> AST.Module
-removeDefinition id m =
-  m { AST.moduleDefinitions = filter include (AST.moduleDefinitions m) }
-  where
+    -- | Only keep names that are not equal to the one given
     include :: AST.Definition -> Bool
     include (AST.GlobalDefinition g) = G.name g /= (AST.Name $ idToShortBS id)
     include _ = True
 
-removeDefinitionProg :: String -> T.Prog -> T.Prog
-removeDefinitionProg id p = filter ((/= id) . T.nameFromDecl) p
+-- | Remove any Taw function with the given name
+removeDefinitionProg :: (MonadState LoopContext) m => String -> m ()
+removeDefinitionProg id = do
+  funs <- gets fs
+  modify $ \s -> s { fs = filter ((/= id) . T.nameFromDecl) funs }
 
-jitProg :: LoopContext -> T.Prog -> LoopContext
-jitProg ctxt p = ctxt { llmod = newast, fs = p ++ noDefsProg }
+-- | Helper that creates a main function from the list of statements
+mainFromStmts :: (MonadState LoopContext) m => Maybe T.Exp -> T.Retty ->
+                 m T.Decl
+mainFromStmts retExp retty = do
+  ss <- gets mainStmts
+  let retStmt = T.Ret (fmap T.noLoc retExp)
+      block = map T.noLoc $ ss ++ [retStmt]
+  return $ T.Gfdecl (T.noLoc $ T.Fdecl retty T.entryFunctionName [] block)
+
+-- | Update the return expression and type of the main function
+updateMainRet :: (MonadState LoopContext) m => Maybe T.Exp -> T.Retty -> m ()
+updateMainRet retExp retty = do
+  removeDefinitionLL T.entryFunctionName
+  main' <- mainFromStmts retExp retty
+  modify $ \s -> s {
+    llmod = L.runLLVM (llmod s) $ cmpProg (fs s ++ [main']) }
+
+-- | Remove any previous definitions of the functions and compile the given
+-- program and make functions available for future statements and expressions
+jitProg :: ((MonadState LoopContext) m, MonadIO m) => T.Prog -> m ()
+jitProg p =
+  if declaresMain p then liftIO $ putStrLn "error: cannot declare main"
+  else do
+    mapM_ (removeDefinitionLL . T.nameFromDecl) p
+    mapM_ (removeDefinitionProg . T.nameFromDecl) p
+    modify $ \s -> s {
+        llmod =  L.runLLVM (llmod s) $ cmpProg p
+      , fs = p ++ fs s }
   where
-    noDefs =
-      foldr (\d acc -> removeDefinition (T.nameFromDecl d) acc) (llmod ctxt) p
-    noDefsProg =
-      foldr (\d acc -> removeDefinitionProg (T.nameFromDecl d) acc) (fs ctxt) p
-    newast  = L.runLLVM noDefs $ cmpProg p
+    -- | Ensure that main was not declared
+    declaresMain :: T.Prog -> Bool
+    declaresMain = any $ (== T.entryFunctionName) . T.nameFromDecl
 
-jitStmt :: LoopContext -> T.Stmt -> LoopContext
-jitStmt ctxt s = ctxt { llmod = newAst, mainStmts = newSS }
-  where
-    newSS = (mainStmts ctxt) ++ [s]
-    noMain = removeDefinition T.entryFunctionName $ llmod ctxt
-    newAst = L.runLLVM noMain $
-      cmpProg $ (fs ctxt) ++ mainFromStmts (newSS ++ [T.Ret Nothing]) T.RetVoid
+-- | Compile the given statement and make any declarations available
+-- for future statements and expressions
+jitStmt :: (MonadState LoopContext) m => T.Stmt -> m ()
+jitStmt s = do
+  addMainStmt s
+  updateMainRet Nothing T.RetVoid
 
-jitExpr :: LoopContext -> T.Exp -> IO LoopContext
-jitExpr ctxt e = do
-  res <- runJIT newAst (idToShortBS T.entryFunctionName) (verbose ctxt)
+-- | Compile the given expression and prints the result or error
+jitExpr :: ((MonadState LoopContext) m, MonadIO m) => T.Exp -> m ()
+jitExpr e = do
+  updateMainRet (Just e) (T.RetVal T.TInt)
+  ctxt <- get
+  res <- liftIO $ runJIT (llmod ctxt) (idToShortBS T.entryFunctionName) (verbose ctxt)
   case res of
-    Left err -> print err >> return ctxt
-    Right val -> print val >> return ctxt { llmod = newAst }
-  where
-    newSS = (mainStmts ctxt) ++ [T.Ret $ Just $ T.noLoc e]
-    noMain = removeDefinition T.entryFunctionName $ llmod ctxt
-    newAst = L.runLLVM noMain $
-      cmpProg $ (fs ctxt) ++ mainFromStmts newSS (T.RetVal T.TInt)
+    Left err -> liftIO $ print err
+    Right val -> liftIO $ print val
 
-process :: LoopContext -> String -> IO LoopContext
-process ctxt source = do
+-- | Process text input, could be a statement, an expression, or a program
+-- definition
+process :: ((MonadState LoopContext) m, MonadIO m) => String -> m ()
+process source =
   case parseStmt source of
-    Right stmt -> return $ jitStmt ctxt stmt
-    Left err -> do
+    Right stmt -> jitStmt stmt
+    Left err ->
       case parseExpr source of
-        Right e -> jitExpr ctxt e
-        Left err -> do
-          case parseString source of
-            Right p -> return $ jitProg ctxt p
-            Left err -> print err >> return ctxt
+        Right e -> jitExpr e
+        Left err ->
+          case parseProg source of
+            Right p -> jitProg p
+            Left err -> liftIO $ print err
 
+-- | Shell loop
 repl :: Bool -> IO ()
-repl v = runInputT defaultSettings $ loop $ emptyLoopContext { verbose = v }
+repl v =
+  runInputT defaultSettings (evalStateT loop emptyLoopContext { verbose = v })
   where
-  loop ctxt = do
-    minput <- getInputLine "> "
-    case minput of
-      Nothing -> outputStrLn "Goodbye."
-      Just "" -> loop ctxt
-      Just input -> do
-        ctxt' <- liftIO $ process ctxt input
-        loop ctxt'
+    loop :: (StateT LoopContext) (InputT IO) ()
+    loop = do
+      minput <- lift $ getInputLine "> "
+      case minput of
+        Nothing -> return ()
+        Just "" -> loop
+        Just input -> do
+          process input
+          loop
 
 main :: IO ()
 main = do
