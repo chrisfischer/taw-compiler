@@ -55,7 +55,7 @@ emptyLoopContext = LoopContext initModule [] [] False
 mainFromStmts :: [T.Stmt] -> T.Retty -> T.Prog
 mainFromStmts ss retty = [main]
   where
-    main = T.Gfdecl (T.noLoc $ T.Fdecl retty "main" [] ss')
+    main = T.Gfdecl (T.noLoc $ T.Fdecl retty T.entryFunctionName [] ss')
     ss' = map T.noLoc ss
 
 removeDefinition :: String -> AST.Module -> AST.Module
@@ -86,19 +86,19 @@ jitStmt :: LoopContext -> T.Stmt -> LoopContext
 jitStmt ctxt s = ctxt { llmod = newAst, mainStmts = newSS }
   where
     newSS = (mainStmts ctxt) ++ [s]
-    noMain = removeDefinition "main" $ llmod ctxt
+    noMain = removeDefinition T.entryFunctionName $ llmod ctxt
     newAst = L.runLLVM noMain $
       cmpProg $ (fs ctxt) ++ mainFromStmts (newSS ++ [T.Ret Nothing]) T.RetVoid
 
 jitExpr :: LoopContext -> T.Exp -> IO LoopContext
 jitExpr ctxt e = do
-  res <- runJIT newAst "main" (verbose ctxt)
+  res <- runJIT newAst (idToShortBS T.entryFunctionName) (verbose ctxt)
   case res of
     Left err -> print err >> return ctxt
     Right val -> print val >> return ctxt { llmod = newAst }
   where
     newSS = (mainStmts ctxt) ++ [T.Ret $ Just $ T.noLoc e]
-    noMain = removeDefinition "main" $ llmod ctxt
+    noMain = removeDefinition T.entryFunctionName $ llmod ctxt
     newAst = L.runLLVM noMain $
       cmpProg $ (fs ctxt) ++ mainFromStmts newSS (T.RetVal T.TInt)
 

@@ -11,7 +11,6 @@ import Control.Monad
 import System.Directory (doesDirectoryExist, getDirectoryContents)
 
 import Ast
-import PrettyAst (renderProg)
 
 -----------------------------
 -- UTILS --------------------
@@ -23,11 +22,6 @@ printFile :: String -> IO ()
 printFile fname = do
   s <- readFile fname
   print s
-
-ppFile :: FilePath -> IO ()
-ppFile fname = do
-  p <- parseFile fname
-  putStr $ renderProg p
 
 parseString :: String -> String -> IO Prog
 parseString s filePath =
@@ -71,7 +65,7 @@ nodeMap = (noLoc <$>)
 
 -- | Takes a constructor and its two arguments and returns a node
 -- of the result of applying the arguments to the constructor
-nodeWrap2 c x y = noLoc (c x y)
+nodeWrap c x y = noLoc (c x y)
 
 -----------------------------
 -- PARSEC DEFS --------------
@@ -123,25 +117,26 @@ arrow      = Token.symbol     lexer "->"
 -- TODO: our Ast has mod
 -- TODO: OAT had bitflip - do we want that?
 expOperators =
-  [ [Prefix (reservedOp "-"   >> return (nodeMap   (Uop Neg )))          ]
+  [ [Prefix (reservedOp "-"   >> return (nodeMap   (Uop Neg    )))       ]
   , [Prefix (reservedOp "!"   >> return (nodeMap   (Uop Lognot )))       ]
-  , [Infix  (reservedOp "*"   >> return (nodeWrap2 (Bop Mul ))) AssocLeft,
-     Infix  (reservedOp "/"   >> return (nodeWrap2 (Bop Div ))) AssocLeft]
-  , [Infix  (reservedOp "+"   >> return (nodeWrap2 (Bop Add ))) AssocLeft,
-     Infix  (reservedOp "-"   >> return (nodeWrap2 (Bop Sub ))) AssocLeft]
-  , [Infix  (reservedOp "<<"  >> return (nodeWrap2 (Bop Shl ))) AssocLeft,
-     Infix  (reservedOp ">>"  >> return (nodeWrap2 (Bop Shr ))) AssocLeft,
-     Infix  (reservedOp ">>>" >> return (nodeWrap2 (Bop Shr ))) AssocLeft]
-  , [Infix  (reservedOp "<"   >> return (nodeWrap2 (Bop Lt  ))) AssocLeft,
-     Infix  (reservedOp "<="  >> return (nodeWrap2 (Bop Lte ))) AssocLeft,
-     Infix  (reservedOp ">"   >> return (nodeWrap2 (Bop Gt  ))) AssocLeft,
-     Infix  (reservedOp ">="  >> return (nodeWrap2 (Bop Gte ))) AssocLeft]
-  , [Infix  (reservedOp "=="  >> return (nodeWrap2 (Bop Eq  ))) AssocLeft,
-     Infix  (reservedOp "!="  >> return (nodeWrap2 (Bop Neq ))) AssocLeft]
-  , [Infix  (reservedOp "&&"  >> return (nodeWrap2 (Bop And ))) AssocLeft]
-  , [Infix  (reservedOp "||"  >> return (nodeWrap2 (Bop Or  ))) AssocLeft]
-  , [Infix  (reservedOp "&"   >> return (nodeWrap2 (Bop IAnd))) AssocLeft]
-  , [Infix  (reservedOp "|"   >> return (nodeWrap2 (Bop IOr ))) AssocLeft]
+  , [Infix  (reservedOp "*"   >> return (nodeWrap (Bop Mul ))) AssocLeft,
+     Infix  (reservedOp "/"   >> return (nodeWrap (Bop Div ))) AssocLeft]
+  , [Infix  (reservedOp "+"   >> return (nodeWrap (Bop Add ))) AssocLeft,
+     Infix  (reservedOp "-"   >> return (nodeWrap (Bop Sub ))) AssocLeft]
+  , [Infix  (reservedOp "<<"  >> return (nodeWrap (Bop Shl ))) AssocLeft,
+     Infix  (reservedOp ">>"  >> return (nodeWrap (Bop Shr ))) AssocLeft,
+     Infix  (reservedOp ">>>" >> return (nodeWrap (Bop Shr ))) AssocLeft,
+     Infix  (reservedOp "%"   >> return (nodeWrap (Bop Mod ))) AssocLeft]
+  , [Infix  (reservedOp "<"   >> return (nodeWrap (Bop Lt  ))) AssocLeft,
+     Infix  (reservedOp "<="  >> return (nodeWrap (Bop Lte ))) AssocLeft,
+     Infix  (reservedOp ">"   >> return (nodeWrap (Bop Gt  ))) AssocLeft,
+     Infix  (reservedOp ">="  >> return (nodeWrap (Bop Gte ))) AssocLeft]
+  , [Infix  (reservedOp "=="  >> return (nodeWrap (Bop Eq  ))) AssocLeft,
+     Infix  (reservedOp "!="  >> return (nodeWrap (Bop Neq ))) AssocLeft]
+  , [Infix  (reservedOp "&&"  >> return (nodeWrap (Bop And ))) AssocLeft]
+  , [Infix  (reservedOp "||"  >> return (nodeWrap (Bop Or  ))) AssocLeft]
+  , [Infix  (reservedOp "&"   >> return (nodeWrap (Bop IAnd))) AssocLeft]
+  , [Infix  (reservedOp "|"   >> return (nodeWrap (Bop IOr ))) AssocLeft]
   ]
 
 exp :: Parser (Node Exp)

@@ -3,6 +3,7 @@ module Main where
 import System.FilePath
 import System.Environment
 
+import Ast (entryFunctionName)
 import Interpreter (run)
 import Parser (parseFile)
 
@@ -18,4 +19,4 @@ main = do
 
 main2 fileName = do
   p <- parseFile fileName
-  run "main" p
+  run entryFunctionName p

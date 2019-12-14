@@ -6,6 +6,7 @@ module Frontend where
 import Control.Applicative
 import Control.Monad
 import Control.Monad.State
+import Data.Maybe (fromMaybe)
 
 import qualified LLVM.AST as AST
 import qualified LLVM.AST.IntegerPredicate as IP
@@ -50,7 +51,7 @@ cmpUnop T.Neg    = L.ineg
 cmpUnop T.Lognot = L.bnot
 
 -- | Compile a Taw expression
-cmpExpr :: (T.Node T.Exp) -> L.FunctionGen AST.Operand
+cmpExpr :: T.Node T.Exp -> L.FunctionGen AST.Operand
 cmpExpr (T.Node (T.CBool b) _) = return $ L.booleanConst b
 cmpExpr (T.Node (T.CInt i) _) = return $ L.integerConst $ toInteger i
 cmpExpr (T.Node (T.Id id) _) = do
@@ -73,13 +74,13 @@ cmpExpr (T.Node (T.Uop u e) _) = do
   cmpUnop u e'
 
 -- | Compile a Taw statement
-cmpStmt :: (T.Node T.Stmt) -> L.FunctionGen ()
+cmpStmt :: T.Node T.Stmt -> L.FunctionGen ()
 -- TODO make more general if adding pointers
 cmpStmt (T.Node (T.Assn (T.Node (T.Id id) _) e2) _) = do
   r <- L.localv $ idToShortBS id
   newVal <- cmpExpr e2
   L.store newVal r
-cmpStmt (T.Node (T.Assn (T.Node (_) _) _) _) = error "Assign called on non id"
+cmpStmt (T.Node (T.Assn (T.Node _ _) _) _) = error "Assign called on non id"
 
 cmpStmt (T.Node (T.Decl (T.Vdecl id e)) _) = do
   e' <- cmpExpr e
@@ -88,8 +89,7 @@ cmpStmt (T.Node (T.Decl (T.Vdecl id e)) _) = do
   L.store e' r
   L.assign (idToShortBS id) r
 
-cmpStmt (T.Node (T.Ret Nothing) _) = do
-  L.ret Nothing
+cmpStmt (T.Node (T.Ret Nothing) _) = L.ret Nothing
 cmpStmt (T.Node (T.Ret (Just e)) _) = do
   e' <- cmpExpr e
   L.ret $ Just e'
@@ -133,9 +133,7 @@ cmpStmt (T.Node (T.If e b1 b2) _) = do
   else L.setCurrentBlock exitLbl
 
 cmpStmt (T.Node (T.For vs cond iter b) _) = do
-  let cond' = case cond of
-                Just e -> e
-                Nothing -> T.noLoc $ T.CBool True
+  let cond' = fromMaybe (T.noLoc $ T.CBool True) cond
   let iter' = case iter of
                 Just s -> [s]
                 Nothing -> []
@@ -207,18 +205,20 @@ cmpDecl _ (T.Gfext (T.Node (T.Fext retty name args) _)) =
 
 -- TYPE PASS
 
+extractDeclHelper :: T.Retty -> T.Id -> [(T.Ty, b)] ->
+                     L.FunctionTypeGen ()
+extractDeclHelper retty name args = do
+  let retty' = cmpRetty retty
+      argtys = map (cmpTy . fst) args
+      fty = L.functionPtr retty' argtys
+  L.setType (idToShortBS name) fty
+
 -- | Extracts the types of the given global declaration
 extractDeclTy :: T.Decl -> L.FunctionTypeGen ()
-extractDeclTy (T.Gfdecl (T.Node (T.Fdecl retty name args _) _)) = do
-  let retty' = cmpRetty retty
-      argtys = map (cmpTy . fst) args
-      fty = L.functionPtr retty' argtys
-  L.setType (idToShortBS name) fty
-extractDeclTy (T.Gfext (T.Node (T.Fext retty name args) _)) = do
-  let retty' = cmpRetty retty
-      argtys = map (cmpTy . fst) args
-      fty = L.functionPtr retty' argtys
-  L.setType (idToShortBS name) fty
+extractDeclTy (T.Gfdecl (T.Node (T.Fdecl retty name args _) _)) =
+  extractDeclHelper retty name args
+extractDeclTy (T.Gfext (T.Node (T.Fext retty name args) _)) =
+  extractDeclHelper retty name args
 
 -- | Extract the types of each global declaration
 extractTypes :: T.Prog -> L.FunctionTypeContext

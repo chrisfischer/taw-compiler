@@ -1,5 +1,6 @@
 module Ast where
 
+-- | Groups a value with a line number for better, more specific errors
 data Node a = Node { elt :: a, loc :: Loc } deriving (Show, Eq)
 
 -- | Helper method to create a Node with no location
@@ -95,3 +96,6 @@ data Decl =
 
 type Prog = [Decl]
 
+-- | Name of the function the interpreter and compiler will start at
+entryFunctionName :: Id
+entryFunctionName = "main"

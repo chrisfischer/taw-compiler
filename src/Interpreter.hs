@@ -10,7 +10,7 @@ import Data.Maybe (fromMaybe)
 import Data.Bits
 import qualified Data.Map as Map
 import Control.Applicative
-import Control.Monad (liftM, liftM2)
+import Control.Monad (liftM, liftM2, when)
 import Control.Monad.State
 import Control.Monad.Except
 
@@ -69,13 +69,13 @@ emptyGlobalContext entry = GlobalContext (emptyFunctionContext entry) Map.empty
 -- | Initializes context with global decls and sets functions
 gCtxtFromProg :: Prog -> Node Fdecl -> Either (Int, String) GlobalContext
 gCtxtFromProg prog entry =
-  fmap (\fs -> (emptyGlobalContext entry) { fdecls = Map.fromList fs }) $
+  (\fs -> (emptyGlobalContext entry) { fdecls = Map.fromList fs }) <$>
     unwrap prog
   where
     unwrap :: Prog -> Either (Int, String) [(Id, Node Fdecl)]
     unwrap [] = Right []
-    unwrap ((Gfdecl f@(Node (Fdecl _ fname _ _) _)):xs) =
-      fmap ((fname, f):) $ unwrap xs
+    unwrap (Gfdecl f@(Node (Fdecl _ fname _ _) _) : xs) =
+      ((fname, f):) <$> unwrap xs
     unwrap _ = Left (12, "Externals are not supported in the interpreter")
 
 -- Helper functions
@@ -116,13 +116,12 @@ assignValue x v = do
     setInFunSubCtxt :: Id -> ValueTy -> FunctionSubContext ->
                        Interp FunctionSubContext
     setInFunSubCtxt x v c =
-      case Map.member x (vs c) of
-        True  -> return c { vs = Map.insert x v $ vs c }
-        False -> case parentSubCtxt c of
-          Just c' -> do
-            c'' <- setInFunSubCtxt x v c'
-            return $ c { parentSubCtxt = Just c'' }
-          Nothing -> throwError (0, "Variable " ++ x ++ " not found")
+      if Map.member x (vs c) then return c { vs = Map.insert x v $ vs c }
+      else case parentSubCtxt c of
+        Just c' -> do
+          c'' <- setInFunSubCtxt x v c'
+          return $ c { parentSubCtxt = Just c'' }
+        Nothing -> throwError (0, "Variable " ++ x ++ " not found")
 
 -- | Adds a new binding for the given Id in the current context
 declValue :: Id -> ValueTy -> Interp ()
@@ -148,7 +147,7 @@ setRetValue v = do
 -- | Creates a new context with the given name and the current as its parent
 pushContext :: Node Fdecl -> Interp ()
 pushContext f = modify $ \s ->
-  let currCtxt' = (emptyFunctionContext f) {parentCtxt = (Just $ currCtxt s)} in
+  let currCtxt' = (emptyFunctionContext f) {parentCtxt = Just $ currCtxt s} in
   s { currCtxt = currCtxt' }
 
   -- | Sets the current context as the first parent context with a different
@@ -195,18 +194,15 @@ verifyValTy (VInt _) TInt = return ()
 verifyValTy (VBool _) TBool = return ()
 verifyValTy (VFun id) (TRef (RFun tys1 retty1)) = do
   Node (Fdecl retty2 _ tyargs _) _ <- lookUpFdecl id
-  if retty1 /= retty2 || tys1 /= map fst tyargs
-  then throwError (9, "Function type mismatch")
-  else return ()
+  when (retty1 /= retty2 || tys1 /= map fst tyargs) $
+    throwError (9, "Function type mismatch")
 verifyValTy _ _ = throwError (9, "Type mismatch")
 
 -- | Evaluate an expression
 evalE :: Node Exp -> Interp ValueTy
 evalE (Node (CBool b) _) = return $ VBool b
 evalE (Node (CInt i) _) = return $ VInt i
-evalE (Node (Id x) _) = do
-  v <- lookUpValue x
-  return v
+evalE (Node (Id x) _) = lookUpValue x
 evalE (Node (Call ef args) _) = do
   fv <- evalE ef
   case fv of
@@ -216,7 +212,7 @@ evalE (Node (Call ef args) _) = do
       verifyArgTypes argvals (Prelude.map fst tyargs)
       let ids = map snd tyargs
       pushContext nf
-      forM_ (zip ids argvals) $ \(id, v) -> declValue id v
+      mapM_ (uncurry declValue) (zip ids argvals)
       catchError (do {
           evalB body
         ; throwError (10, "Cannot call void function as an expression") })
@@ -226,10 +222,8 @@ evalE (Node (Call ef args) _) = do
       returnHandler :: (Int, String) -> Interp ValueTy
       returnHandler (-1, _) = do
         retv <- popContext
-        case retv of
-          Just v -> return v
-          Nothing ->
-            throwError (10, "Cannot call void function as an expression")
+        maybe (throwError (10, "Cannot call void function as an expression"))
+          return retv
       returnHandler e = throwError e
 evalE (Node (Bop o e1 e2) loc) = do
   e1' <- evalE e1
@@ -293,12 +287,12 @@ evalS (Node (SCall ef args) _) = do
       verifyArgTypes argvals (Prelude.map fst tyargs)
       let ids = map snd tyargs
       pushContext nf
-      forM_ (zip ids argvals) $ \(id, v) -> declValue id v
-      catchError (do { evalB body ; _ <- popContext ; return () }) returnHandler
+      mapM_ (uncurry declValue) (zip ids argvals)
+      catchError (do { evalB body ; void popContext }) returnHandler
     _ -> throwError (3, "Cannot call a non-function pointer")
   where
     returnHandler :: (Int, String) -> Interp ()
-    returnHandler (-1, _) = do { _ <- popContext ; return () }
+    returnHandler (-1, _) = void popContext
     returnHandler e = throwError e
 evalS (Node (If e b1 b2) _) = do
   v <- evalE e
@@ -313,7 +307,7 @@ evalS (Node (For vs cond iter ss) loc) = do
     e' <- evalE e
     declValue x e'
   let cond' = fromMaybe (Node (CBool True) loc) cond
-  let iter' = fromMaybe (Node (Nop) loc) iter
+  let iter' = fromMaybe (Node Nop loc) iter
   evalS $ Node (While cond' (ss ++ [iter'])) loc
 evalS w@(Node (While e ss) _) = do
   v <- evalE e
@@ -332,7 +326,7 @@ evalB = mapM_ evalS
 runBlock :: Block ->
             GlobalContext ->
             (Either (Int, String) (), GlobalContext)
-runBlock b gCtxt = runState (runExceptT $ runInterp $ evalB b) gCtxt
+runBlock = runState . runExceptT . runInterp . evalB
 
 executeProg :: Id -> Prog -> Either (Int, String) ValueTy
 executeProg entry prog =
@@ -344,7 +338,7 @@ executeProg entry prog =
       case gCtxt of
         Right startCtxt ->
           let (res, finalCtxt) = runBlock b startCtxt in
-          case (res, retVal $ currCtxt $ finalCtxt) of
+          case (res, retVal $ currCtxt finalCtxt) of
             (Left (-1, _), Just r) -> Right r
             (Left e, _) -> Left e
             (Right _, Just r) -> Right r
@@ -360,11 +354,12 @@ run entry prog = do
   putStrLn (display r)
   where
     -- Display either the error or resulting value
-    display :: (Either (Int, String) ValueTy) -> String
+    display :: Either (Int, String) ValueTy -> String
     display (Left (_, v))  = "Exception: " ++ v
     display (Right v) = "Result: " ++ showVType v
     -- Display the underlying value in the value type
     showVType :: ValueTy -> String
     showVType (VInt i) = show i
-    showVType (VBool b) = show b
+    showVType (VBool True) = "true"
+    showVType (VBool False) = "false"
     showVType (VFun f) = f
