@@ -20,7 +20,7 @@ import qualified LLVM.AST as AST
 import qualified LLVM.ExecutionEngine as EE
 
 foreign import ccall "dynamic"
-  mkMain :: FunPtr (IO Int64) -> (IO Int64)
+  mkMain :: FunPtr (IO Int64) -> IO Int64
 
 run :: FunPtr a -> IO Int64
 run fn = mkMain (castFunPtr fn :: FunPtr (IO Int64))
@@ -30,7 +30,7 @@ defaultJit c = EE.withMCJIT c (Just 0) Nothing Nothing Nothing
 
 -- | Executes the given LLVM module, starting at the given function name
 runJIT :: AST.Module -> BS.ShortByteString -> Bool -> IO (Either String Int64)
-runJIT mod fentry verbose = do
+runJIT mod fentry verbose =
   C.withContext $ \context ->
     defaultJit context $ \executionEngine ->
       M.withModuleFromAST context mod $ \m ->

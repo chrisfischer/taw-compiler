@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# OPTIONS -fwarn-incomplete-patterns #-}
 
 module LLVMGen where
@@ -8,6 +9,7 @@ import Data.Word
 import Data.String
 import Data.List
 import Data.Function
+import Data.Maybe (fromMaybe)
 import qualified Data.Map as Map
 
 import Control.Monad.State
@@ -48,12 +50,9 @@ emptyModule fileName = AST.defaultModule {
 addDefn :: AST.Definition -> LLVM ()
 addDefn d@(AST.GlobalDefinition gd) = do
   defs <- gets AST.moduleDefinitions
-  if any (\(AST.GlobalDefinition gd') -> name gd' == name gd) defs then
-    return ()
-  else
+  unless (any (\(AST.GlobalDefinition gd') -> name gd' == name gd) defs) $
     modify $ \s -> s { AST.moduleDefinitions = AST.moduleDefinitions s ++ [d] }
 addDefn _ = error "Unsupported global definition type"
-
 
 -- | Define a new function
 define :: AST.Type
@@ -183,9 +182,9 @@ createBlocks m =
     sortBlocks = sortBy (compare `on` (idx . snd))
     -- | Transform a BlockState into a BasicBlock with a given name
     makeBlock :: (AST.Name, BlockState) -> BasicBlock
-    makeBlock (l, (BlockState _ s (Just t))) = BasicBlock l (reverse s) t
-    makeBlock (l, (BlockState _ _ Nothing)) =
-      error $ "Block has no terminator: " ++ (show l)
+    makeBlock (l, BlockState _ s (Just t)) = BasicBlock l (reverse s) t
+    makeBlock (l, BlockState _ _ Nothing) =
+      error $ "Block has no terminator: " ++ show l
 
 -- | Create an empty block with the given index
 emptyBlock :: Int -> BlockState
@@ -204,8 +203,7 @@ addBlock blockName = do
 
 -- | Sets the current block name to the given name
 setCurrentBlock :: AST.Name -> FunctionGen ()
-setCurrentBlock blockName = do
-  modify $ \s -> s { currentBlock = blockName }
+setCurrentBlock blockName = modify $ \s -> s { currentBlock = blockName }
 
 -- | Sets the contents of the current block to the given state
 modifyBlock :: BlockState -> FunctionGen ()
@@ -252,7 +250,7 @@ freshName name = do
       Nothing -> (name, Map.insert name 1 names)
 
 -- | Append a new instruction to the current block
-instr :: AST.Type -> AST.Instruction -> FunctionGen (AST.Operand)
+instr :: AST.Type -> AST.Instruction -> FunctionGen AST.Operand
 instr ty ins = do
   n <- freshUnName
   let ref = AST.UnName n
@@ -262,7 +260,7 @@ instr ty ins = do
   return $ local ty ref
 
 -- | Append a new instruction to the hoisted stack of the function
-hoistedInstr :: AST.Type -> AST.Instruction -> FunctionGen (AST.Operand)
+hoistedInstr :: AST.Type -> AST.Instruction -> FunctionGen AST.Operand
 hoistedInstr ty ins = do
   n <- freshUnName
   let ref = AST.UnName n
@@ -275,7 +273,7 @@ voidInstr :: AST.Instruction -> FunctionGen ()
 voidInstr ins = do
   block <- getCurrentBlock
   let instrs = instrStack block
-  modifyBlock (block { instrStack = (AST.Do ins) : instrs } )
+  modifyBlock (block { instrStack = AST.Do ins : instrs } )
 
 -- | Set the terminator for the current block
 terminator :: AST.Named AST.Terminator -> FunctionGen ()
@@ -284,8 +282,7 @@ terminator term = do
   modifyBlock (block { term = Just term })
 
 setFtyCtxt :: Map.Map ShortByteString AST.Type -> FunctionGen()
-setFtyCtxt ctxt = do
-  modify $ \s -> s { ftyCtxt = ctxt }
+setFtyCtxt ctxt = modify $ \s -> s { ftyCtxt = ctxt }
 
 -- SYMBOL TABLE
 
@@ -346,16 +343,13 @@ getFunction name = do
 localv :: ShortByteString -> FunctionGen AST.Operand
 localv name = do
   v <- getVar name
-  return $ case v of
-    Just op -> op
-    Nothing -> error $ "Local variable not in scope: " ++ show name
+  return $ fromMaybe (error $ "Local variable not in scope: " ++ show name) v
 
 globalf :: ShortByteString -> FunctionGen AST.Operand
 globalf name = do
   f <- getFunction name
-  return $ case f of
-    Just op -> op
-    Nothing -> error $ "Function " ++ show name ++ " not found"
+  return $ fromMaybe (error $ "Function " ++ show name ++ " not found") f
+
 
 -- REFERENCES
 
@@ -390,13 +384,14 @@ void :: AST.Type
 void = AST.VoidType
 
 typeFromOperand :: AST.Operand -> AST.Type
-typeFromOperand (AST.LocalReference t@(AST.IntegerType 1) _) = t
-typeFromOperand (AST.LocalReference t@(AST.IntegerType 64) _) = t
-typeFromOperand (AST.LocalReference t@(AST.FloatingPointType AST.DoubleFP) _) =
-  t
-typeFromOperand (AST.LocalReference t@(AST.PointerType (AST.FunctionType _ _ _) _) _) = t
-typeFromOperand (AST.ConstantOperand (C.Int 64 _)) = integer
-typeFromOperand (AST.ConstantOperand (C.Int 1 _)) = boolean
+typeFromOperand (AST.LocalReference
+  t@(AST.IntegerType bs) _) | bs == booleanSize || bs == integerSize = t
+typeFromOperand (AST.LocalReference
+  t@(AST.FloatingPointType AST.DoubleFP) _) = t
+typeFromOperand (AST.LocalReference
+  t@(AST.PointerType AST.FunctionType{} _) _) = t
+typeFromOperand (AST.ConstantOperand (C.Int bs _)) | bs == integerSize = integer
+typeFromOperand (AST.ConstantOperand (C.Int bs _)) | bs == booleanSize = boolean
 typeFromOperand (AST.ConstantOperand (C.GlobalReference t _)) = t
 typeFromOperand e = error $ "Unrecognized type: " ++ show e
 
@@ -438,7 +433,7 @@ fdiv a b = instr double $ AST.FDiv AST.noFastMathFlags a b []
 -- | Float comparision
 fcmp :: FP.FloatingPointPredicate -> AST.Operand -> AST.Operand
         -> FunctionGen AST.Operand
-fcmp cond a b = instr double $ AST.FCmp cond a b []
+fcmp cond a b = instr boolean $ AST.FCmp cond a b []
 
 -- | Float negation
 fneg :: AST.Operand -> FunctionGen AST.Operand
@@ -463,7 +458,7 @@ idiv a b = instr integer $ AST.SDiv False a b []
 -- | Integer comparisons
 icmp :: IP.IntegerPredicate -> AST.Operand -> AST.Operand
         -> FunctionGen AST.Operand
-icmp cond a b = instr integer $ AST.ICmp cond a b []
+icmp cond a b = instr boolean $ AST.ICmp cond a b []
 
 -- | Integer left shift
 ilshift :: AST.Operand -> AST.Operand -> FunctionGen AST.Operand
@@ -513,17 +508,17 @@ bnot a = instr boolean $ AST.Xor (booleanConst True) a []
 
 -- Adds empty parameter attributes
 toArgs :: [AST.Operand] -> [(AST.Operand, [A.ParameterAttribute])]
-toArgs = map (\x -> (x, []))
+toArgs = map (, [])
 
 -- Call the given function with the given arguments
 call :: AST.Operand -> [AST.Operand] -> AST.Type -> FunctionGen AST.Operand
 call fun args retty =
-  instr retty $ AST.Call Nothing CC.C [] (Right fun) (toArgs args) [] [] where
+  instr retty $ AST.Call Nothing CC.C [] (Right fun) (toArgs args) [] []
 
 -- Call the given function with the given arguments
 scall :: AST.Operand -> [AST.Operand] -> FunctionGen ()
 scall fun args =
-  voidInstr $ AST.Call Nothing CC.C [] (Right fun) (toArgs args) [] [] where
+  voidInstr $ AST.Call Nothing CC.C [] (Right fun) (toArgs args) [] []
 
 -- | Allocate space for a local variable of the given type
 alloca :: AST.Type -> FunctionGen AST.Operand
@@ -550,17 +545,13 @@ currentBlockHasRet = do
 br :: AST.Name -> FunctionGen ()
 br val = do
   h <- currentBlockHasRet
-  case h of
-    True -> return ()
-    False -> terminator $ AST.Do $ AST.Br val []
+  unless h $ terminator $ AST.Do $ AST.Br val []
 
 -- Contiditonal branch, if no Ret has been set
 cbr :: AST.Operand -> AST.Name -> AST.Name -> FunctionGen ()
 cbr cond tr fl = do
   h <- currentBlockHasRet
-  case h of
-    True -> return ()
-    False -> terminator $ AST.Do $ AST.CondBr cond tr fl []
+  unless h $ terminator $ AST.Do $ AST.CondBr cond tr fl []
 
 -- Return
 ret :: Maybe AST.Operand -> FunctionGen ()

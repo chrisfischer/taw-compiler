@@ -18,11 +18,6 @@ import Ast
 
 -- Printing / Parsing Utils
 
-printFile :: String -> IO ()
-printFile fname = do
-  s <- readFile fname
-  print s
-
 parseString :: String -> String -> IO Prog
 parseString s filePath =
   case parse langParser filePath s of
@@ -181,7 +176,7 @@ sequenceOfDecl :: Parser [Decl]
 sequenceOfDecl = many decl
 
 decl :: Parser Decl
-decl = Ast.Gfdecl . noLoc <$> (try fdecl)
+decl = Ast.Gfdecl . noLoc <$> try fdecl
    <|> Ast.Gfext  . noLoc <$> fext
 
 fdecl :: Parser Fdecl
@@ -231,8 +226,7 @@ rty :: Parser Rty
 rty = do
   tys <- parens $ sepEndBy ty comma
   arrow
-  r <- Parser.retty
-  return $ RFun tys r
+  RFun tys <$> Parser.retty
 
 retty :: Parser Retty
 retty = (reserved "void" >> return Ast.RetVoid)
@@ -247,7 +241,7 @@ block = many (noLoc <$> stmt)
 
 stmt :: Parser Stmt
 stmt = retStmt
-   <|> (try scallStmt)
+   <|> try scallStmt
    <|> declStmt
    <|> assnStmt
    <|> ifStmt
@@ -273,11 +267,11 @@ declStmt :: Parser Stmt
 declStmt = Ast.Decl <$> vdecl <* semi
 
 retStmt :: Parser Stmt
-retStmt = (try $ reserved "return" >> Ast.Ret . Just <$> Parser.exp <* semi)
-      <|> (reserved "return" >> return (Ast.Ret Nothing) <* semi)
+retStmt = try (reserved "return" >> Ast.Ret . Just <$> Parser.exp <* semi)
+      <|> (reserved "return" >> Ast.Ret Nothing <$ semi)
 
 ifStmt :: Parser Stmt
-ifStmt = (try ifWithElse) <|> ifNoElse
+ifStmt = try ifWithElse <|> ifNoElse
 
 ifWithElse :: Parser Stmt
 ifWithElse = do
@@ -293,7 +287,7 @@ ifNoElse = do
   reserved "if"
   condExp <- parens Parser.exp
   ifBlock <- braces block
-  return $ Ast.If condExp ifBlock (Nothing)
+  return $ Ast.If condExp ifBlock Nothing
 
 forStmt :: Parser Stmt
 forStmt = do

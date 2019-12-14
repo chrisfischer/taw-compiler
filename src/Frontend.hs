@@ -19,7 +19,8 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified LLVMGen as L
 import qualified Ast as T
 
--- TODO remove
+-- | Convert an Id to a ShortByteString that LLVM uses
+idToShortBS :: T.Id -> BS.ShortByteString
 idToShortBS = BS.toShort . BS8.pack
 
 -- | Compile a binary operator into a function that takes in LLVM operands
