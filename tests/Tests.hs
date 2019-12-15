@@ -18,30 +18,30 @@ import qualified LLVM.AST as AST
 import qualified LLVM.ExecutionEngine as EE
 
 -- import Ast
-import JIT
+-- import JIT
 
-int :: AST.Type
-int = AST.IntegerType 64
+-- int :: AST.Type
+-- int = AST.IntegerType 64
 
-defAdd :: AST.Definition
-defAdd = AST.GlobalDefinition AST.functionDefaults
-  { name = AST.Name "main"
-  , parameters = ([] , False)
-  , returnType = int
-  , basicBlocks = [body]
-  }
-  where
-    body = BasicBlock
-        (AST.Name "entry")
-        []
-        (AST.Do $ AST.Ret (Just (AST.ConstantOperand (Int 64 42))) [])
+-- defAdd :: AST.Definition
+-- defAdd = AST.GlobalDefinition AST.functionDefaults
+--   { name = AST.Name "main"
+--   , parameters = ([] , False)
+--   , returnType = int
+--   , basicBlocks = [body]
+--   }
+--   where
+--     body = BasicBlock
+--         (AST.Name "entry")
+--         []
+--         (AST.Do $ AST.Ret (Just (AST.ConstantOperand (Int 64 42))) [])
 
 
-module_ :: AST.Module
-module_ = AST.defaultModule
-  { AST.moduleName = "basic"
-  , AST.moduleDefinitions = [defAdd]
-  }
+-- module_ :: AST.Module
+-- module_ = AST.defaultModule
+--   { AST.moduleName = "basic"
+--   , AST.moduleDefinitions = [defAdd]
+--   }
 
 
 -- idd x = noLoc $ Id x
