@@ -69,6 +69,6 @@ module_ = AST.defaultModule
 
 main :: IO ()
 main = do
-  res <- runJIT module_ "main"
+  res <- runJIT module_ "main" False
   putStrLn "Eager JIT Result:"
   print res

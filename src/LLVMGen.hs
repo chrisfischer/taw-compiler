@@ -12,8 +12,9 @@ import Data.Function
 import Data.Maybe (fromMaybe)
 import qualified Data.Map as Map
 
-import Control.Monad.State
 import Control.Applicative
+import Control.Monad.State
+import Control.Monad.Except
 
 import LLVM.Prelude
 import LLVM.AST.Global
@@ -32,11 +33,14 @@ import qualified LLVM.AST.IntegerPredicate as IP
 
 -- | State monad to build up a LLVM module as the AST of the source language
 -- is traversed
-newtype LLVM a = LLVM (State AST.Module a)
-  deriving (Functor, Applicative, Monad, MonadState AST.Module)
+newtype LLVM a = LLVM (ExceptT String (State AST.Module) a)
+  deriving (Functor, Applicative, Monad, MonadState AST.Module,
+            MonadError String)
 
-runLLVM :: AST.Module -> LLVM a -> AST.Module
-runLLVM mod (LLVM m) = execState m mod
+runLLVM :: AST.Module -> LLVM a -> Either String AST.Module
+runLLVM mod (LLVM m) = case runState (runExceptT m) mod of
+                         (Left err, _) -> Left err
+                         (Right _, ll) -> Right ll
 
 -- | Create a named empty module
 emptyModule :: ShortByteString -> AST.Module
@@ -52,7 +56,7 @@ addDefn d@(AST.GlobalDefinition gd) = do
   defs <- gets AST.moduleDefinitions
   unless (any (\(AST.GlobalDefinition gd') -> name gd' == name gd) defs) $
     modify $ \s -> s { AST.moduleDefinitions = AST.moduleDefinitions s ++ [d] }
-addDefn _ = error "Unsupported global definition type"
+addDefn _ = throwError "unsupported global definition type"
 
 -- | Define a new function
 define :: AST.Type
@@ -108,7 +112,7 @@ popScope = do
   syms <- gets scopedSymbolTable
   case parentTable syms of
     Just syms' -> modify $ \s -> s { scopedSymbolTable = syms' }
-    Nothing -> error "Cannot pop root scope"
+    Nothing -> throwError "cannot pop root scope"
 
 data FunctionGenState
   = FunctionGenState {
@@ -146,12 +150,17 @@ data BlockState
 -- | State monad to build up a function's blocks as the AST of the source
 -- language is traversed
 newtype FunctionGen a =
-  FunctionGen { runFunctionGen :: State FunctionGenState a}
-  deriving (Functor, Applicative, Monad, MonadState FunctionGenState )
+  FunctionGen { runFunctionGen :: ExceptT String (State FunctionGenState) a}
+  deriving (Functor, Applicative, Monad, MonadState FunctionGenState,
+            MonadError String)
 
 -- | Extract the generated function out of its state monad
-execFunctionGen :: FunctionGen a -> FunctionGenState
-execFunctionGen m = execState (runFunctionGen m) emptyFunctionGen where
+execFunctionGen :: FunctionGen a -> Either String FunctionGenState
+execFunctionGen m =
+  case runState (runExceptT (runFunctionGen m)) emptyFunctionGen of
+    (Left err, _) -> Left err
+    (Right _, fgen) -> Right fgen
+  where
   -- | Create a new FunctionGen with the current block set as the entry block
   emptyFunctionGen :: FunctionGenState
   emptyFunctionGen = FunctionGenState
@@ -184,7 +193,7 @@ createBlocks m =
     makeBlock :: (AST.Name, BlockState) -> BasicBlock
     makeBlock (l, BlockState _ s (Just t)) = BasicBlock l (reverse s) t
     makeBlock (l, BlockState _ _ Nothing) =
-      error $ "Block has no terminator: " ++ show l
+      error $ "block has no terminator: " ++ show l
 
 -- | Create an empty block with the given index
 emptyBlock :: Int -> BlockState
@@ -222,7 +231,7 @@ getCurrentBlock = do
   blks <- gets blocks
   case Map.lookup c blks of
     Just x -> return x
-    Nothing -> error $ "No such block: " ++ show c
+    Nothing -> throwError $ "no such block: " ++ show c
 
 -- | Removes the given block from the function generator statex
 removeBlock :: AST.Name -> FunctionGen ()
@@ -291,7 +300,7 @@ assign :: ShortByteString -> AST.Operand -> FunctionGen ()
 assign name x = do
   v <- getVarInCurrentScope name
   case v of
-    Just _ -> error $ "Cannot redeclare variable " ++ show name
+    Just _ -> throwError $ "cannot redeclare variable " ++ show name
     Nothing -> do
       syms <- gets scopedSymbolTable
       let syms' = syms { symbolTable = Map.insert name x (symbolTable syms) }
@@ -343,12 +352,12 @@ getFunction name = do
 localv :: ShortByteString -> FunctionGen AST.Operand
 localv name = do
   v <- getVar name
-  return $ fromMaybe (error $ "Local variable not in scope: " ++ show name) v
+  maybe (throwError $ "local variable not in scope: " ++ show name) return v
 
 globalf :: ShortByteString -> FunctionGen AST.Operand
 globalf name = do
   f <- getFunction name
-  return $ fromMaybe (error $ "Function " ++ show name ++ " not found") f
+  maybe (throwError $ "function " ++ show name ++ " not found") return f
 
 
 -- REFERENCES
@@ -393,7 +402,7 @@ typeFromOperand (AST.LocalReference
 typeFromOperand (AST.ConstantOperand (C.Int bs _)) | bs == integerSize = integer
 typeFromOperand (AST.ConstantOperand (C.Int bs _)) | bs == booleanSize = boolean
 typeFromOperand (AST.ConstantOperand (C.GlobalReference t _)) = t
-typeFromOperand e = error $ "Unrecognized type: " ++ show e
+typeFromOperand e = error $ "unrecognized type: " ++ show e
 
 -- CONSTANTS
 
@@ -561,18 +570,23 @@ ret val = terminator $ AST.Do $ AST.Ret val []
 -- FUNCTION TYPE EXTRACTION
 
 newtype FunctionTypeGen a =
-  FunctionTypeGen { runFunctionTypeGen :: State FunctionTypeContext a}
-  deriving (Functor, Applicative, Monad, MonadState FunctionTypeContext )
+  FunctionTypeGen {
+    runFunctionTypeGen :: ExceptT String (State FunctionTypeContext) a}
+  deriving (Functor, Applicative, Monad, MonadState FunctionTypeContext,
+            MonadError String)
 
 type FunctionTypeContext = Map.Map ShortByteString AST.Type
 
 -- | Extract the generated function out of its state monad
-execFunctionTypeGen :: FunctionTypeGen a -> FunctionTypeContext
-execFunctionTypeGen m = execState (runFunctionTypeGen m) Map.empty
+execFunctionTypeGen :: FunctionTypeGen a -> Either String FunctionTypeContext
+execFunctionTypeGen m =
+  case runState (runExceptT (runFunctionTypeGen m)) Map.empty of
+    (Left err, _) -> Left err
+    (Right _, fctxt) -> Right fctxt
 
 setType :: ShortByteString -> AST.Type -> FunctionTypeGen ()
 setType id ty = do
   s <- get
   case Map.lookup id s of
-    Just _ -> error $ "Cannot have multiple definitions of function " ++ show id
+    Just _ -> throwError $ "cannot have multiple definitions of function " ++ show id
     Nothing -> modify $ \s -> Map.insert id ty s

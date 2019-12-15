@@ -12,9 +12,7 @@ import System.Directory (doesDirectoryExist, getDirectoryContents)
 
 import Ast
 
------------------------------
--- UTILS --------------------
------------------------------
+-- UTILS
 
 -- Printing / Parsing Utils
 
@@ -62,11 +60,7 @@ nodeMap = (noLoc <$>)
 -- of the result of applying the arguments to the constructor
 nodeWrap c x y = noLoc (c x y)
 
------------------------------
--- PARSEC DEFS --------------
------------------------------
--- modified from:
--- https://wiki.haskell.org/Parsing_a_simple_imperative_language
+-- PARSEC DEFS
 
 languageDef =
           emptyDef { Token.commentStart    = "/*"
@@ -108,9 +102,6 @@ openParen  = Token.symbol     lexer "("
 closeParen = Token.symbol     lexer ")"
 arrow      = Token.symbol     lexer "->"
 
--- TODO: >>> needs its own constructor
--- TODO: our Ast has mod
--- TODO: OAT had bitflip - do we want that?
 expOperators =
   [ [Prefix (reservedOp "-"   >> return (nodeMap   (Uop Neg    )))       ]
   , [Prefix (reservedOp "!"   >> return (nodeMap   (Uop Lognot )))       ]
@@ -143,10 +134,7 @@ expTerm = parens Parser.exp
       <|> nodeMap (try callExp)
       <|> nodeMap idExp
 
-
------------------------------
--- EXPRESSIONS --------------
------------------------------
+-- EXPRESSIONS
 
 boolExp :: Parser Exp
 boolExp = (reserved "true"  >> return (Ast.CBool True))
@@ -164,10 +152,7 @@ callExp = do
   argExs <- parens $ sepEndBy Parser.exp comma
   return $ Ast.Call (noLoc idEx) argExs
 
-
------------------------------
--- DECLARATIONS -------------
------------------------------
+-- DECLARATIONS
 
 langParser :: Parser Prog
 langParser = whiteSpace >> sequenceOfDecl
@@ -212,10 +197,7 @@ arg = do t <- ty
          id <- identifier
          return (t, id)
 
-
------------------------------
--- TYPES --------------------
------------------------------
+-- TYPES
 
 ty :: Parser Ty
 ty =  (reserved "int"  >> return Ast.TInt)
@@ -232,9 +214,7 @@ retty :: Parser Retty
 retty = (reserved "void" >> return Ast.RetVoid)
     <|> RetVal <$> ty
 
------------------------------
--- STATEMENTS ---------------
------------------------------
+-- STATEMENTS
 
 block :: Parser Block
 block = many (noLoc <$> stmt)

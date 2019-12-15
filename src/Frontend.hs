@@ -5,6 +5,7 @@ module Frontend where
 
 import Control.Applicative
 import Control.Monad
+import Control.Monad.Except
 import Control.Monad.State
 import Data.Maybe (fromMaybe)
 
@@ -183,7 +184,7 @@ cmpRetty T.RetVoid = L.void
 cmpDecl :: L.FunctionTypeContext -> T.Decl -> L.LLVM ()
 cmpDecl ctxt (T.Gfdecl (T.Node (T.Fdecl retty name args body) _)) =
   let args' = map (\(ty, id) -> (cmpTy ty, AST.Name (idToShortBS id))) args
-      blocks = L.createBlocks $ L.execFunctionGen $ do
+      bsOrError = L.execFunctionGen $ do
         L.setFtyCtxt ctxt
         entry <- L.addBlock L.entryBlockName
         L.setCurrentBlock entry
@@ -198,7 +199,11 @@ cmpDecl ctxt (T.Gfdecl (T.Node (T.Fdecl retty name args body) _)) =
           (T.RetVoid, False) -> L.ret Nothing
           _ -> return ()
         in
-  L.define (cmpRetty retty) (idToShortBS name) args' blocks
+  case bsOrError of
+    Left err -> throwError err
+    Right bs -> do
+      let blocks = L.createBlocks bs
+      L.define (cmpRetty retty) (idToShortBS name) args' blocks
 cmpDecl _ (T.Gfext (T.Node (T.Fext retty name args) _)) =
   let args' = map (\(ty, id) -> (cmpTy ty, AST.Name (idToShortBS id))) args in
   L.external (cmpRetty retty) (idToShortBS name) args'
@@ -222,14 +227,20 @@ extractDeclTy (T.Gfext (T.Node (T.Fext retty name args) _)) =
   extractDeclHelper retty name args
 
 -- | Extract the types of each global declaration
-extractTypes :: T.Prog -> L.FunctionTypeContext
+extractTypes :: T.Prog -> Either String L.FunctionTypeContext
 extractTypes p = L.execFunctionTypeGen $ mapM_ extractDeclTy p
 
-cmpProg :: T.Prog -> L.LLVM ()
-cmpProg p = do
-  let ctxt = extractTypes p
-  mapM_ (cmpDecl ctxt) p
+-- | Compile a Taw program into an existing LLVM module
+cmpProgWithModule :: AST.Module -> T.Prog -> Either String AST.Module
+cmpProgWithModule mod p =
+  L.runLLVM mod $ cmpProg p
+  where
+    cmpProg :: T.Prog -> L.LLVM ()
+    cmpProg p = do
+      case extractTypes p of
+        Left err -> throwError err
+        Right ctxt -> mapM_ (cmpDecl ctxt) p
 
 -- | Compile a Taw program
-execCmp :: String -> T.Prog -> AST.Module
-execCmp modName p = L.runLLVM (L.emptyModule (idToShortBS modName)) $ cmpProg p
+cmpProg :: String -> T.Prog -> Either String AST.Module
+cmpProg modName p = cmpProgWithModule (L.emptyModule (idToShortBS modName)) p

@@ -49,8 +49,8 @@ data FunctionSubContext
 
 newtype Interp a =
   Interp { runInterp :: ExceptT (Int, String) (State GlobalContext) a }
-  deriving (Functor, Applicative,
-            Monad, MonadState GlobalContext, MonadError (Int, String) )
+  deriving (Functor, Applicative, Monad, MonadState GlobalContext,
+            MonadError (Int, String))
 
 -- Convienience Initializers
 

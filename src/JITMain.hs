@@ -5,6 +5,7 @@ module Main where
 
 import Control.Monad.Trans
 import Control.Monad.State
+import Control.Monad.Except
 
 import System.IO
 import System.Environment
@@ -82,24 +83,28 @@ mainFromStmts retExp retty = do
   return $ T.Gfdecl (T.noLoc $ T.Fdecl retty T.entryFunctionName [] block)
 
 -- | Update the return expression and type of the main function
-updateMainRet :: (MonadState LoopContext) m => Maybe T.Exp -> T.Retty -> m ()
+updateMainRet :: ((MonadState LoopContext) m, MonadError String m) => Maybe T.Exp -> T.Retty -> m ()
 updateMainRet retExp retty = do
   removeDefinitionLL T.entryFunctionName
   main' <- mainFromStmts retExp retty
-  modify $ \s -> s {
-    llmod = L.runLLVM (llmod s) $ cmpProg (fs s ++ [main']) }
+  s <- get
+  case cmpProgWithModule (llmod s) (fs s ++ [main']) of
+    Left err -> throwError err
+    Right ll' -> modify $ \s -> s { llmod = ll' }
 
 -- | Remove any previous definitions of the functions and compile the given
 -- program and make functions available for future statements and expressions
-jitProg :: ((MonadState LoopContext) m, MonadIO m) => T.Prog -> m ()
+jitProg :: ((MonadState LoopContext) m, MonadIO m, MonadError String m) =>
+           T.Prog -> m ()
 jitProg p =
-  if declaresMain p then liftIO $ putStrLn "error: cannot declare main"
+  if declaresMain p then throwError "cannot declare main"
   else do
+    s <- get
     mapM_ (removeDefinitionLL . T.nameFromDecl) p
     mapM_ (removeDefinitionProg . T.nameFromDecl) p
-    modify $ \s -> s {
-        llmod =  L.runLLVM (llmod s) $ cmpProg p
-      , fs = p ++ fs s }
+    case cmpProgWithModule (llmod s) p of
+      Left err -> throwError err
+      Right ll -> modify $ \s -> s { llmod = ll, fs = p ++ fs s }
   where
     -- | Ensure that main was not declared
     declaresMain :: T.Prog -> Bool
@@ -107,43 +112,45 @@ jitProg p =
 
 -- | Compile the given statement and make any declarations available
 -- for future statements and expressions
-jitStmt :: (MonadState LoopContext) m => T.Stmt -> m ()
+jitStmt :: ((MonadState LoopContext) m, MonadError String m) => T.Stmt -> m ()
 jitStmt s = do
   addMainStmt s
   updateMainRet Nothing T.RetVoid
 
 -- | Compile the given expression and prints the result or error
-jitExpr :: ((MonadState LoopContext) m, MonadIO m) => T.Exp -> m ()
+jitExpr :: ((MonadState LoopContext) m, MonadIO m, MonadError String m) => T.Exp -> m ()
 jitExpr e = do
   updateMainRet (Just e) (T.RetVal T.TInt)
   ctxt <- get
   res <- liftIO $ runJIT (llmod ctxt) (idToShortBS T.entryFunctionName) (verbose ctxt)
   case res of
-    Left err -> liftIO $ print err
+    Left err -> throwError err
     Right val -> liftIO $ print val
 
 -- | Process text input, could be a statement, an expression, or a program
 -- definition
-process :: ((MonadState LoopContext) m, MonadIO m) => String -> m ()
+process :: ((MonadState LoopContext) m, MonadIO m, MonadError String m) =>
+           String -> m ()
 process source =
-  case parseStmt source of
-    Right stmt -> jitStmt stmt
-    Left err ->
-      case parseExpr source of
-        Right e -> jitExpr e
-        Left err ->
-          case parseProg source of
-            Right p -> jitProg p
-            Left err -> liftIO $ print err
+  let m = case parseStmt source of
+            Right stmt -> jitStmt stmt
+            Left err ->
+              case parseExpr source of
+                Right e -> jitExpr e
+                Left err ->
+                  case parseProg source of
+                    Right p -> jitProg p
+                    Left err -> liftIO $ print err in
+  catchError m $ \err -> liftIO $ putStrLn $ "error: " ++ err
 
 -- | Shell loop
 repl :: Bool -> IO ()
 repl v =
-  runInputT defaultSettings (evalStateT loop emptyLoopContext { verbose = v })
+  void $ runInputT defaultSettings $ evalStateT (runExceptT loop) emptyLoopContext { verbose = v }
   where
-    loop :: (StateT LoopContext) (InputT IO) ()
+    loop :: ExceptT String (StateT LoopContext (InputT IO)) ()
     loop = do
-      minput <- lift $ getInputLine "> "
+      minput <- lift $ lift $ getInputLine "> "
       case minput of
         Nothing -> return ()
         Just "" -> loop
