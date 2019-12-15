@@ -15,22 +15,25 @@ import Ast
 
 -- Printing / Parsing Utils
 
-parseString :: String -> String -> IO (Either String Prog)
+-- | Parse the given string, returning either an error string or a program
+parseString :: String -> String -> Either String Prog
 parseString s filePath =
   case parse langParser filePath s of
-    Left e -> return $ Left $ show e
-    Right p -> return $ Right p
+    Left e -> Left $ show e
+    Right p -> Right p
 
+-- | Parse the given file, returning either an error string or a program
 parseFile :: FilePath -> IO (Either String Prog)
 parseFile name = do
   s <- readFile name
-  parseString s name
+  return $ parseString s name
 
+-- | Parse the given file and if successful, call the given callback, otherwise
+-- print out the error
 parseFileM :: FilePath -> (Prog -> IO ()) -> IO ()
 parseFileM name m = do
   s <- readFile name
-  res <- parseString s name
-  case res of
+  case parseString s name of
     Left err -> putStrLn err
     Right p -> liftIO $ m p
 

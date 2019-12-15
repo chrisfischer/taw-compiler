@@ -38,7 +38,7 @@ data LoopContext
       -- Accumulated LLVM module
       llmod :: AST.Module
       -- Accumulated main statements
-      , mainStmts :: [T.Stmt]
+    , mainStmts :: [T.Stmt]
       -- Declared functions, needed for the types when compiling new statements
     , fs :: [T.Decl]
     , verbose :: Bool
@@ -73,6 +73,10 @@ removeDefinitionProg id = do
   funs <- gets fs
   modify $ \s -> s { fs = filter ((/= id) . T.nameFromDecl) funs }
 
+-- | Remove a function from the current context with the given name
+removeDefinition :: (MonadState LoopContext) m => String -> m ()
+removeDefinition id = removeDefinitionLL id >> removeDefinitionProg id
+
 -- | Helper that creates a main function from the list of statements
 mainFromStmts :: (MonadState LoopContext) m => Maybe T.Exp -> T.Retty ->
                  m T.Decl
@@ -83,7 +87,8 @@ mainFromStmts retExp retty = do
   return $ T.Gfdecl (T.noLoc $ T.Fdecl retty T.entryFunctionName [] block)
 
 -- | Update the return expression and type of the main function
-updateMainRet :: ((MonadState LoopContext) m, MonadError String m) => Maybe T.Exp -> T.Retty -> m ()
+updateMainRet :: ((MonadState LoopContext) m, MonadError String m) =>
+                 Maybe T.Exp -> T.Retty -> m ()
 updateMainRet retExp retty = do
   removeDefinitionLL T.entryFunctionName
   main' <- mainFromStmts retExp retty
@@ -100,8 +105,7 @@ jitProg p =
   if declaresMain p then throwError "cannot declare main"
   else do
     s <- get
-    mapM_ (removeDefinitionLL . T.nameFromDecl) p
-    mapM_ (removeDefinitionProg . T.nameFromDecl) p
+    mapM_ (removeDefinition . T.nameFromDecl) p
     case cmpProgWithModule (llmod s) p of
       Left err -> throwError err
       Right ll -> modify $ \s -> s { llmod = ll, fs = p ++ fs s }
@@ -145,23 +149,34 @@ process source =
   catchError m $ \err -> liftIO $ putStrLn $ "error: " ++ err
 
 -- | Shell loop
-repl :: Bool -> IO ()
-repl v =
-  void $ runInputT defaultSettings $ evalStateT (runExceptT loop) emptyLoopContext { verbose = v }
-  where
-    loop :: ExceptT String (StateT LoopContext (InputT IO)) ()
-    loop = do
-      minput <- lift $ lift $ getInputLine "> "
-      case minput of
-        Nothing -> return ()
-        Just "" -> loop
-        Just input -> do
-          process input
-          loop
+loop :: ExceptT String (StateT LoopContext (InputT IO)) ()
+loop = do
+  removeDefinition T.entryFunctionName
+  minput <- lift $ lift $ getInputLine "> "
+  case minput of
+    Nothing -> return ()
+    Just "" -> loop
+    Just input -> do
+      process input
+      loop
+
+-- | Calls the shell loop, if a filename is given, will try to parse and
+-- compile it
+repl :: Bool -> Maybe String -> IO ()
+repl v Nothing =
+  void $ runInputT defaultSettings $ evalStateT (runExceptT loop)
+    emptyLoopContext { verbose = v }
+repl v (Just fileName) =
+  P.parseFileM fileName $ \p ->
+    cmpProgM fileName p $ \ll ->
+      void $ runInputT defaultSettings $ evalStateT (runExceptT loop)
+          emptyLoopContext { verbose = v, llmod = ll, fs = p }
 
 main :: IO ()
 main = do
   args <- getArgs
   case args of
-    ["-v"] -> repl True
-    []     -> repl False
+    ("-v" : fileName : _) -> repl True  $ Just fileName
+    ["-v"]                -> repl True  Nothing
+    [fileName]            -> repl False $ Just fileName
+    []                    -> repl False Nothing

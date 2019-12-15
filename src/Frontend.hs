@@ -244,3 +244,11 @@ cmpProgWithModule mod p =
 -- | Compile a Taw program
 cmpProg :: String -> T.Prog -> Either String AST.Module
 cmpProg modName p = cmpProgWithModule (L.emptyModule (idToShortBS modName)) p
+
+-- | Compile a Taw program and if successful, call the given callback, otherwise
+-- print out the error
+cmpProgM :: String -> T.Prog -> (AST.Module -> IO ()) -> IO ()
+cmpProgM modName p m = do
+  case cmpProg modName p of
+    Left err -> putStrLn $ "error: " ++ err
+    Right ll -> liftIO $ m ll

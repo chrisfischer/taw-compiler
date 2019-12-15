@@ -9,7 +9,7 @@ import qualified LLVM.Context as C
 
 import qualified Data.ByteString.Char8 as BS8
 
-import Frontend (cmpProg)
+import Frontend (cmpProgM)
 import Parser (parseFileM)
 
 writeLLVM :: String -> AST.Module -> IO ()
@@ -23,9 +23,7 @@ main = do
   args <- getArgs
   case args of
     [] -> putStrLn "error: no input files"
-    (fileName : _) -> parseFileM fileName $ \p ->
-      case cmpProg fileName p of
-        Left err -> putStrLn $ "error: " ++ err
-        Right ll -> do
-          let newFileName = fst (splitExtension fileName) ++ ".ll"
-          writeLLVM newFileName ll
+    (fileName : _) ->
+      parseFileM fileName $ \p ->
+        let newFileName = fst (splitExtension fileName) ++ ".ll" in
+        cmpProgM fileName p $ \ll -> writeLLVM newFileName ll
