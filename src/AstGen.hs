@@ -71,20 +71,19 @@ data FunctionSubContext
 --  AstGenerator { runAstGenerator :: QCT.GenT (State GlobalContext) a }
 --  deriving (Functor, Applicative, Monad, QCT.MonadGen, MonadState GlobalContext)
 
-{--
+-- | Execute the generator given a main funty and a list of other funtys
 execAstGenerator :: FunTy -> [FunTy] -> [Fdecl]
 execAstGenerator main fs =
   let gCtxt = initGlobalContext main fs
-  -- TODO actually implement the monad to generate instead of (return ())
-      gCtxt' = execState (runAstGenerator (return ())) gCtxt in
+      gCtxt' = execState genProg gCtxt in
   map fCtxtToFdecl $ Map.elems (contexts gCtxt')
   where
     fCtxtToFdecl :: FunctionContext -> Fdecl
-    fCtxtToFdecl (FunctionContext fty (FunctionSubContext Nothing _ _ block)) = funTytoFdecl fty (reverse block)
+    fCtxtToFdecl (FunctionContext fty (FunctionSubContext Nothing _ _ _ block)) = funTytoFdecl fty (reverse block)
     fCtxtToFdecl _ = error "Subcontext is not root"
     funTytoFdecl :: FunTy -> Block -> Fdecl
     funTytoFdecl (FunTy fn args retty) b = Fdecl (RetVal retty) fn args b
---}
+
 
 -- Convienience Initializers
 
@@ -293,8 +292,8 @@ genEqCompBinop = QCT.liftGen $ elements [Ast.Eq, Ast.Neq]
 -- Expression Generators
 
 -- | Generates an expresssion of an argued type
-genExpOfTy :: (QCT.MonadGen m, MonadState GlobalContext m) => Ty -> m Exp
-genExpOfTy ty = case ty of
+genExpWithType :: (QCT.MonadGen m, MonadState GlobalContext m) => Ty -> m Exp
+genExpWithType ty = case ty of
                   TBool -> genBoolExp
                   TInt  -> genIntExp
                   _     -> error "Invalid type argued" 
@@ -378,34 +377,109 @@ genRty' n = liftM2 RFun (QCT.listOf $ genTy' n) genRetty
 genRetty :: (QCT.MonadGen m, MonadState GlobalContext m) => m Retty
 genRetty = RetVal <$> genPrimitiveTy
 
--- Statement Generators
+-- Statement/Block Generators
 
-genStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m Stmt
-genStmt = undefined
+-- | Generate a list of statements, ending with a return statement into
+-- the current subcontext
+genFuncBodyBlock :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
+genFuncBodyBlock = do
+  QCT.listOf $ QCT.oneof [genSimpleStmt, genIfStmt]
+  genRetStmt 
 
-genAssnStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m Stmt
+-- | Generate an arbitrary return statement based on the current function's
+-- return type and push it to the current subcontext 
+genRetStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
+genRetStmt = do
+  curr <- currentFunctionContext
+  let funty@(FunTy _ _ rty) = fty curr
+  exp  <- genExpWithType rty
+  pushStmt $ Ret $ Just $ noLoc exp
+ 
+-- | Generate non-nesting statement and add it to the current subcontext
+genSimpleStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
+genSimpleStmt = do
+  unit <- QCT.oneof [genAssnStmt, genDeclStmt]
+  return unit  -- TODO: pretty sure there's a neater way to do this
+
+-- | Generate an arbitrary assign statement and push it to the context
+genAssnStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
 genAssnStmt = do
-  varsToTys <- inScopeVars 
-  index     <- QCT.liftGen $ choose (0, (Map.size varsToTys))
-  (id, ty)  <- (Map.elems varsToTys) !! index
-  ty'       <- genPrimitiveTy
-  exp       <- genExpOfTy ty'
-  if ty == ty' 
-  then return $ Assn (noLoc $ id) (noLoc exp)
-  else error "need to implement the context updating" -- TODO
+  ty    <- genPrimitiveTy
+  exp   <- genExpWithType ty
+  vars  <- inScopeVarsWithType ty
+  index <- QCT.liftGen $ choose (0, length vars)
+  let id = vars !! index
+  pushStmt $ Assn (noLoc $ Id id) (noLoc exp)
+-- TODO: be able to change var types and update context accordingly
+--  varsToTys <- inScopeVars 
+--  index     <- QCT.liftGen $ choose (0, (Map.size varsToTys))
+--  (id, ty)  <- (Map.elems varsToTys) !! index
+--  ty'       <- genPrimitiveTy
+--  exp       <- genExpOfTy ty'
+--  if ty == ty' 
+--  then return $ Assn (noLoc $ id) (noLoc exp)
+--  else error "need to implement the context updating" -- TODO
 
+-- | Generate a declaration statement, update the state to include
+-- the new variable, and push the statement to the context
+genDeclStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
+genDeclStmt = do
+  (ty, vdecl@(Vdecl id nexp)) <- genVdeclWithType
+  declVar id ty
+  pushStmt $ Decl vdecl
+
+-- | Generate an arbitrary variable delcaration with the type of its expression
 genVdeclWithType :: (QCT.MonadGen m, MonadState GlobalContext m) => m (Ty, Vdecl)
 genVdeclWithType = do
-  id  <- genId
+  id  <- genFreshId
   ty  <- genPrimitiveTy
-  exp <- genExpOfTy ty
+  exp <- genExpWithType ty
   return $ (ty, Vdecl id (noLoc exp))
+
+-- | Generate an arbitrary if statement and push it to the context
+genIfStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
+genIfStmt = do
+  condition      <- genBoolExp
+  pushSubContext
+  QCT.listOf genSimpleStmt
+  ifBlock        <- popSubContext
+  elseMaybeBlock <- genMaybeBlock
+  pushStmt $ If (noLoc condition) ifBlock elseMaybeBlock
+
+-- | Generate a maybe block - an arbitrary choice between Nothing and
+-- Just some arbitrary block
+genMaybeBlock :: (QCT.MonadGen m, MonadState GlobalContext m) => m (Maybe Block)
+genMaybeBlock = do
+  pushSubContext -- TODO: refactor so we only do the work if necessary
+  QCT.listOf genSimpleStmt
+  block <- popSubContext
+  maybe <- QCT.arbitrary'
+  if maybe
+  then return $ Just $ block
+  else return $ Nothing 
+
+-- Top Level Generators
+
+-- | Generate a function declaration corresponding to the argued FunTy
+buildCtxtForFunId :: (QCT.MonadGen m, MonadState GlobalContext m) => Id -> m ()
+buildCtxtForFunId id = do
+  setCurrentFun id
+  genFuncBodyBlock
+
+-- | Generate a program given that the state contains some initial global context
+genProg :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
+genProg = do
+  fCtxts <- gets contexts
+  let ids = Map.keys fCtxts
+  let id  = ids !! 0
+  buildCtxtForFunId id
+  return ()
 
 -- Helpers
 
--- | Generate an arbitrary variable name TODO: readd that library I was using for this
-genId :: (QCT.MonadGen m, MonadState GlobalContext m) => m Id
-genId = QCT.arbitrary'
+-- | Generate a fresh arbitrary variable name TODO: readd that library I was using for this
+genFreshId :: (QCT.MonadGen m, MonadState GlobalContext m) => m Id
+genFreshId = QCT.arbitrary'
 
 {--
 --------------------------------------
@@ -429,12 +503,12 @@ genStmt c = sized (genStmt' c)
 genStmt':: Ctxt -> Int -> Gen Stmt
 genStmt' c 0 =
   let vdecl = [Decl <$> (genVdecl c)] in
-  let assn = case genIdExpOpt c of
+  let assn = case genFreshIdExpOpt c of
                Nothing    -> []
                Just idGen -> [liftM2 Assn (nol idGen) (genNodeExp c)] in
   let ret = case currentRetty c of
               RetVoid   -> []
-              RetVal ty -> [fmap (Ret . Just) (nol $ genExpOfType c ty)] in
+              RetVal ty -> [fmap (Ret . Just) (nol $ genExpWithType c ty)] in
   oneof $ vdecl ++ assn ++ ret
 
 
