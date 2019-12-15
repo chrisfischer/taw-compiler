@@ -17,6 +17,9 @@ data Ty =
   | TRef Rty
   deriving (Show, Eq)
 
+instance Ord Ty where
+  (<=) = \x y -> show x <= show y
+
 data Rty =
   RFun [Ty] Retty
   deriving (Show, Eq)
