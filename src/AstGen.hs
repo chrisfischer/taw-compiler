@@ -28,6 +28,7 @@ emptyFdecl r fn as = Fdecl r fn as []
 
 -- Name, arg types and names, return type (must not be void)
 data FunTy = FunTy Id [(Ty, Id)] Ty deriving Show
+data CallTy = CallTy Id [Ty] Ty deriving Show
 
 --------------------------------------
 -- CONTEXT ---------------------------
@@ -40,7 +41,7 @@ data GlobalContext
     -- Map from function name to its context
   , contexts :: Map.Map Id FunctionContext
     -- Map from retty to function type
-  , funs :: Map.Map Ty FunTy
+  , funs :: Map.Map Ty [FunTy]
   } deriving Show
 
 data FunctionContext
@@ -59,15 +60,18 @@ data FunctionSubContext
   , vars :: Map.Map Id Ty
     -- Map from each type to vars of that type declared in this scope
   , tysToVars :: Map.Map Ty [Id]
+    -- Map from return type to functions of that return type declared in this scope
+  , tysToFuns :: Map.Map Ty [CallTy]
     -- Accumulated statements in this scope
   , stmts :: Block
   } deriving Show
 
 
 -- newtype AstGenerator a =
-  --   AstGenerator { runAstGenerator :: QCT.GenT (State GlobalContext) a }
-  --   deriving (Functor, Applicative, Monad, QCT.MonadGen, MonadState GlobalContext)
+--  AstGenerator { runAstGenerator :: QCT.GenT (State GlobalContext) a }
+--  deriving (Functor, Applicative, Monad, QCT.MonadGen, MonadState GlobalContext)
 
+{--
 execAstGenerator :: FunTy -> [FunTy] -> [Fdecl]
 execAstGenerator main fs =
   let gCtxt = initGlobalContext main fs
@@ -80,13 +84,13 @@ execAstGenerator main fs =
     fCtxtToFdecl _ = error "Subcontext is not root"
     funTytoFdecl :: FunTy -> Block -> Fdecl
     funTytoFdecl (FunTy fn args retty) b = Fdecl (RetVal retty) fn args b
-
+--}
 
 -- Convienience Initializers
 
 -- | Intializes an empty function sub context with no parent
 emptyFunctionSubContext :: FunctionSubContext
-emptyFunctionSubContext = FunctionSubContext Nothing Map.empty Map.empty []
+emptyFunctionSubContext = FunctionSubContext Nothing Map.empty Map.empty Map.empty []
 
 -- | Intializes an empty function context with no parent, initalizes declared
 -- variables with the arguments
@@ -95,18 +99,22 @@ emptyFunctionContext fty@(FunTy _ args _) =
   FunctionContext fty emptyFunctionSubContext {
       vars = Map.fromList $ map swap args
     , tysToVars = foldr (\(ty, id) acc -> Map.alter (Just [id] <>) ty acc) Map.empty args
+    , tysToFuns = foldr foldInCallTy Map.empty args
     }
+  where
+    foldInCallTy :: (Ty, Id) -> Map.Map Ty [CallTy] -> Map.Map Ty [CallTy]
+    foldInCallTy (ty, id) acc = case ty of
+                       TRef (RFun aTys (RetVal rty)) -> Map.alter (Just [CallTy id aTys rty] <>) rty acc
+                       _                    -> acc
 
 -- | Intializes an empty global context
 initGlobalContext :: FunTy -> [FunTy] -> GlobalContext
 initGlobalContext main@(FunTy fn _ _) fs =
   let fs' = main : fs in
-  let fds = Map.fromList $ map (\f@(FunTy _ _ retty) -> (retty, f)) fs'
+  let fds = foldr (\f@(FunTy _ _ retty) acc -> Map.alter (Just [f] <>) retty acc) Map.empty fs -- no main 
       ctxts = Map.fromList $
         map (\f@(FunTy fn _ _) -> (fn, emptyFunctionContext f)) fs'
-  in
-  GlobalContext fn ctxts fds
-
+  in GlobalContext fn ctxts fds
 
 -- Helper functions
 
@@ -131,12 +139,34 @@ modifyCurrentFunctionContext f = do
   activeName <- gets currentFun
   modify $ \s -> s { contexts = Map.insert activeName f (contexts s) }
 
--- | Looks for a function declaration with the given name
-lookUpFunTy :: (QCT.MonadGen m, MonadState GlobalContext m) =>
-               Ty -> m (Maybe FunTy)
-lookUpFunTy x = do
+-- | Converts a FunTy to a CallTy
+funTyToCallTy :: FunTy -> CallTy
+funTyToCallTy f@(FunTy id args retty) = CallTy id (map fst args) retty
+
+-- | Looks for functions with the argued return type
+inScopeCallTysWithRetType :: (QCT.MonadGen m, MonadState GlobalContext m) => Ty -> m [CallTy]
+inScopeCallTysWithRetType ty = do
+  fs   <- gets funs
+  curr <- currentFunctionContext
+  let globalFuns = Map.findWithDefault [] ty fs
+  return $ (accFuns $ currSubCtxt curr) ++ (map funTyToCallTy globalFuns)
+  where
+    -- | looks up local functions
+    accFuns :: FunctionSubContext -> [CallTy]
+    accFuns c =
+      let pfuns = case parentSubCtxt c of
+                    Just c' -> accFuns c'
+                    Nothing -> []
+          cfuns = Map.findWithDefault [] ty (tysToFuns c) in
+      cfuns ++ pfuns
+
+-- | Looks for global functions with the argued return type
+globalFunsWithRetty :: (QCT.MonadGen m, MonadState GlobalContext m) => Ty -> m [FunTy]
+globalFunsWithRetty ty = do
   fs <- gets funs
-  return $ Map.lookup x fs
+  case Map.lookup ty fs of
+    Nothing     -> return []
+    Just funtys -> return funtys
 
 -- | Looks recursively up the context stack and merges var decls
 inScopeVars :: (QCT.MonadGen m, MonadState GlobalContext m) => m (Map.Map Id Ty)
@@ -149,7 +179,7 @@ inScopeVars = do
       let pvars = case parentSubCtxt c of
                     Just c' -> accVars c'
                     Nothing -> Map.empty in
-      Map.unionWith (+) pvars (vars c)
+      Map.union (vars c) pvars
 
 -- | Looks recursively up the context stack and
 inScopeTysToVars :: (QCT.MonadGen m, MonadState GlobalContext m) =>
@@ -164,7 +194,7 @@ inScopeTysToVars = do
                     Just c' -> accVars c'
                     Nothing -> Map.empty in
       mergeMaps pvars (tysToVars c)
-    mergeMaps :: Map.Map k [a] -> Map.Map k [a] -> Map.Map k [a]
+    mergeMaps :: Map.Map Ty [Id] -> Map.Map Ty [Id] -> Map.Map Ty [Id]
     mergeMaps m1 m2 =
       Map.foldrWithKey (\k v acc -> Map.alter (Just v <>) k acc) m1 m2
 
@@ -190,6 +220,25 @@ declVar x ty = do
   modifyCurrentFunctionContext curr {
     currSubCtxt = currSub {
       vars = vars', tysToVars = tysToVars' } }
+
+-- TODO: finish this associated with genAssn
+-- | Finds the first function text where the argued Id was declared
+-- or Nothing if no such context can be found
+--findSubContextWithId :: (QCT.MonadGen m, MonadState GlobalContext m) =>
+--                        Id -> m  
+
+-- | Updates the binding for the argued Id in the first context where it appears
+--assnVar :: (QCT.MonadGen m, MonadState GlobalContext m) =>
+--           Id -> Ty -> m ()
+--assnVar id ty = do
+--  curr <- currentFunctionContext
+--  let currSub = currSubCtxt curr
+--      subWithId = findSubcontextWithId id
+--      oldTy = (vars subWithId) ! id
+--      vars' = Map.adjust (\_ -> ty) id (vars subWithId)
+--      tysToVars' = Map.adjust (ids -> Just $ List.delete id ids) oldTy (tysToVars subWithId)
+--      tysToVars'' = Map.adjust (ids -> Just $ id:ids) ty tysToVars'
+      
 
 -- | Creates a new context with the current as its parent with the same name
 pushSubContext :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
@@ -218,169 +267,147 @@ pushStmt s = do
   let currSub' = currSub { stmts = noLoc s : (stmts currSub) }
   modifyCurrentFunctionContext curr { currSubCtxt = currSub' }
 
-data Ctxt = Ctxt {
---   -- lookup vars by ty string
---   vars :: Map.Map String [String]
---   -- lookup functions by retty string
--- , funs :: Map.Map String [String]
---   -- lookup functions Rtys by id
--- , funTypes :: Map.Map String Rty
--- -- , currentFun :: String
-}
-
--- helpers
-idsOfType :: String -> Ctxt -> [Exp]
-idsOfType t c =
-  case Map.lookup t (vars c) of
-    Nothing   -> []
-    Just vars -> Ast.Id <$> vars
-
-funsOfType :: String -> Ctxt -> [String]
-funsOfType t c =
-  case Map.lookup t (funs c) of
-    Nothing   -> []
-    Just funs -> funs
-
-currentRetty :: Ctxt -> Retty
-currentRetty c = let RFun _ retty = funTypes c (Map.!) (currentFun c) in retty
-
--- test contexts
-myC :: Ctxt
-myC = Ctxt (Map.insert "TBool" ["bool1", "bool2"]
-             (Map.insert "TInt" ["int1", "int2"] Map.empty))
-           (Map.insert "TBool" ["fBool"] Map.empty)
-           (Map.insert "fBool" (RFun [TBool, TBool] (RetVal TBool)) Map.empty)
-           ""
 
 --------------------------------------
--- OPERATOR GENERATORS ---------------
+-- GENERATORS ------------------------
 --------------------------------------
 
-genBoolUnop :: Gen Unop
-genBoolUnop = return Ast.Neg
+-- Operator Generators
 
-genBoolBinop :: Gen Binop
-genBoolBinop = elements [Ast.And, Ast.Or]
+genBoolUnop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Unop
+genBoolUnop = QCT.liftGen $ return Ast.Neg
 
-genIntBinop :: Gen Binop
-genIntBinop = elements [Ast.Add, Ast.Sub, Ast.Mul, Ast.Div, Ast.Mod]
--- ^ add logical operators here
+genBoolBinop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Binop
+genBoolBinop = QCT.liftGen $ elements [Ast.And, Ast.Or]
 
-genOrdCompBinop :: Gen Binop
-genOrdCompBinop = elements [Ast.Lt, Ast.Lte, Ast.Gt, Ast.Gte]
+genIntBinop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Binop
+genIntBinop = QCT.liftGen $ elements [Ast.Add, Ast.Sub, Ast.Mul, Ast.Div, Ast.Mod]
+-- ^ TODO: add logical operators here
 
-genEqCompBinop :: Gen Binop
-genEqCompBinop = elements [Ast.Eq, Ast.Neq]
+genOrdCompBinop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Binop
+genOrdCompBinop = QCT.liftGen $ elements [Ast.Lt, Ast.Lte, Ast.Gt, Ast.Gte]
 
+genEqCompBinop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Binop
+genEqCompBinop = QCT.liftGen $ elements [Ast.Eq, Ast.Neq]
 
---------------------------------------
--- EXPRESSION GENERATORS -------------
---------------------------------------
-genMaybeNodeExp :: Ctxt -> Gen (Maybe (Node Exp))
-genMaybeNodeExp c =
-  oneof [Just <$> genNodeExp c,
-         return Nothing       ]
+-- Expression Generators
 
-genNodeExp :: Ctxt -> Gen (Node Exp)
-genNodeExp c = noLoc <$> (genExp c)
+-- | Generates an expresssion of an argued type
+genExpOfTy :: (QCT.MonadGen m, MonadState GlobalContext m) => Ty -> m Exp
+genExpOfTy ty = case ty of
+                  TBool -> genBoolExp
+                  TInt  -> genIntExp
+                  _     -> error "Invalid type argued" 
 
-genExp :: Ctxt -> Gen Exp
-genExp c = sized (genExp' c)
+-- | generate a correct expression of type TBool
+genBoolExp :: (QCT.MonadGen m, MonadState GlobalContext m) => m Exp
+genBoolExp = QCT.sized genBoolExp'
 
-genExp' :: Ctxt -> Int -> Gen Exp
-genExp' c n =
-  oneof [genIntExp'  c n,
-         genBoolExp' c n]
-
-genIntExp :: Ctxt -> Gen Exp
-genIntExp c = sized (genIntExp' c)
-
-genIntExp' :: Ctxt -> Int -> Gen Exp
-genIntExp' c 0 =
-  let arbGen   = CInt <$> arbitrary in
-  let idGens   = return <$> (idsOfType "TInt" c) in
-  oneof $ [arbGen] ++ idGens -- TODO: fix this so it's evenly balanced
-genIntExp' c n | n > 0 =
-  oneof [genIntExp' c 0,
-         liftM3 Bop genIntBinop subExp subExp]
-  where subExp = noLoc <$> (genIntExp' c (n `div` 2))
-
-genBoolExp :: Ctxt -> Gen Exp
-genBoolExp c = sized (genBoolExp' c)
-
-genBoolExp' :: Ctxt -> Int -> Gen Exp
-genBoolExp' c 0 =
-  let arbGen = CBool <$> arbitrary in
-  let idGens = return <$> (idsOfType "TBool" c) in
-  oneof $ [arbGen] ++ idGens
-genBoolExp' c n | n > 0 =
-  oneof [genBoolExp' c 0                          ,
-         liftM2 Uop genBoolUnop boolExp           ,
-         liftM3 Bop genBoolBinop boolExp boolExp  ,
-         liftM3 Bop genOrdCompBinop intExp intExp , -- TODO: maybe not just ints
-         liftM3 Bop genEqCompBinop intExp intExp  ,
-         liftM3 Bop genEqCompBinop boolExp boolExp] -- TODO: add other comps
-  where boolExp = noLoc <$> (genBoolExp' c n')
-        intExp  = noLoc <$> (genIntExp'  c n')
+genBoolExp' :: (QCT.MonadGen m, MonadState GlobalContext m) => Int -> m Exp
+genBoolExp' 0 = do
+  ids   <- inScopeVarsWithType TBool
+  QCT.liftGen $ oneof [CBool <$> arbitrary  , 
+                       elements $ Id <$> ids]
+genBoolExp' n | n > 0 =
+  QCT.oneof [genBoolExp' 0                            ,
+             liftM2 Uop genBoolUnop boolExp           ,
+             liftM3 Bop genBoolBinop boolExp boolExp  ,
+             liftM3 Bop genOrdCompBinop intExp intExp ,
+             liftM3 Bop genEqCompBinop intExp intExp  ,
+             liftM3 Bop genEqCompBinop boolExp boolExp,
+             genCallExpWithType TBool                 ]
+  where boolExp = noLoc <$> (genBoolExp' n')
+        intExp  = noLoc <$> (genIntExp'  n')
         n'      = n `div` 2
 
+-- | generate a correct expression of type TInt
+genIntExp :: (QCT.MonadGen m, MonadState GlobalContext m) => m Exp
+genIntExp = QCT.sized genIntExp'
 
-genIdExpOpt :: Ctxt -> Maybe (Gen Exp)
-genIdExpOpt c =
-  let ids = concatMap (\k -> vars c ! k) (keys (vars c)) in
-  case ids of
-    []    -> Nothing
-    x:xs  -> Just $ Ast.Id <$> (elements ids)
+genIntExp' :: (QCT.MonadGen m, MonadState GlobalContext m) => Int -> m Exp
+genIntExp' 0 = do
+  ids <- inScopeVarsWithType TInt
+  QCT.liftGen $ oneof [CInt <$> arbitrary, elements $ Id <$> ids]
+genIntExp' n =
+  QCT.oneof [genIntExp' 0,
+             liftM3 Bop genIntBinop subExp subExp,
+             genCallExpWithType TInt             ]
+  where subExp = noLoc <$> (genIntExp' (n `div` 2))
 
-genExpOfType :: Ctxt -> Ty -> Gen Exp
-genExpOfType c ty =
-  case ty of
-    TInt     -> genIntExp c
-    TBool    -> genBoolExp c
-    TRef rty -> error "not generating expressions for function types"
+-- | Generates a correct Call expression for a function that returns the argued type
+genCallExpWithType :: (QCT.MonadGen m, MonadState GlobalContext m) => Ty -> m Exp
+genCallExpWithType ty = do
+  callTys <- inScopeCallTysWithRetType ty
+  index   <- QCT.liftGen $ choose (0, length callTys)
+  let (CallTy id tys rty) = callTys !! index
+  bools   <- QCT.vectorOf (length tys) genBoolExp
+  ints    <- QCT.vectorOf (length tys) genIntExp
+  let args = map (getVal bools ints) (zip tys [0..(length tys)])
+  return $ Call (noLoc $ Id id) (noLoc <$> args)
+  where
+    getVal :: [Exp] -> [Exp] -> (Ty, Int) -> Exp
+    getVal bools ints (ty, i) = case ty of
+                                  TBool -> bools !! i
+                                  TInt  -> ints !! i
+                                  _     -> error "whoops, can't handle function types yet"
 
--- WIP: getting the call expressions in there
-idsForTys :: Ctxt -> [Ty] -> [Maybe (Gen Exp)]
-idsForTys c tys =
-  do ty <- tys
-     case Map.lookup (show ty) (vars c) of
-       Nothing  -> return Nothing
-       Just ids -> return $ Just $ elements $ Ast.Id <$> ids
+-- Type Generators
 
+-- | Generate an arbitrary primitive Ty
+genPrimitiveTy :: (QCT.MonadGen m, MonadState GlobalContext m) => m Ty
+genPrimitiveTy = QCT.elements [TBool, TInt]
 
---------------------------------------
--- TYPE GENERATORS -------------------
---------------------------------------
+-- | Generate an arbitrary Ty
+genTy :: (QCT.MonadGen m, MonadState GlobalContext m) => m Ty
+genTy = QCT.sized genTy'
 
-genTy :: Gen Ty
-genTy = sized genTy'
+genTy' :: (QCT.MonadGen m, MonadState GlobalContext m) => Int -> m Ty
+genTy' 0 = genPrimitiveTy
+genTy' n | n > 0 = 
+  QCT.oneof [genTy' 0                              ,
+             TRef <$> (genRty' (n `div` 2 `mod` 3))] -- TODO: improve this limit strategy
 
-genTy' :: Int -> Gen Ty
-genTy' 0 = oneof $ return <$> [TBool, TInt]
-genTy' n | n > 0 =
-  oneof [return TBool                          ,
-         return TInt                           ,
-         TRef <$> (genRty' (n `div` 2 `mod` 3))]
+-- | Generate an arbitrary Rty (function type)
+genRty :: (QCT.MonadGen m, MonadState GlobalContext m) => m Rty
+genRty = QCT.sized genRty'
 
-genRty :: Gen Rty
-genRty = sized genRty'
+genRty' :: (QCT.MonadGen m, MonadState GlobalContext m) => Int -> m Rty
+genRty' n = liftM2 RFun (QCT.listOf $ genTy' n) genRetty
 
-genRty' :: Int -> Gen Rty
-genRty' n = liftM2 RFun (listOf $ genTy' n) genRetty
+-- | Generate an arbitrary return type
+genRetty :: (QCT.MonadGen m, MonadState GlobalContext m) => m Retty
+genRetty = RetVal <$> genPrimitiveTy
 
-genRetty :: Gen Retty
-genRetty =
-  oneof $ return <$> [RetVoid     ,
-                      RetVal TInt ,
-                      RetVal TBool]
+-- Statement Generators
 
--- | old version could return function types, but didn't make sense
--- genRetty' :: Int -> Gen Retty
--- genRetty' n =
---  frequency [(4, RetVal <$> (genTy' n)),
---             (1, return RetVoid       )]
+genStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m Stmt
+genStmt = undefined
 
+genAssnStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m Stmt
+genAssnStmt = do
+  varsToTys <- inScopeVars 
+  index     <- QCT.liftGen $ choose (0, (Map.size varsToTys))
+  (id, ty)  <- (Map.elems varsToTys) !! index
+  ty'       <- genPrimitiveTy
+  exp       <- genExpOfTy ty'
+  if ty == ty' 
+  then return $ Assn (noLoc $ id) (noLoc exp)
+  else error "need to implement the context updating" -- TODO
 
+genVdeclWithType :: (QCT.MonadGen m, MonadState GlobalContext m) => m (Ty, Vdecl)
+genVdeclWithType = do
+  id  <- genId
+  ty  <- genPrimitiveTy
+  exp <- genExpOfTy ty
+  return $ (ty, Vdecl id (noLoc exp))
+
+-- Helpers
+
+-- | Generate an arbitrary variable name TODO: readd that library I was using for this
+genId :: (QCT.MonadGen m, MonadState GlobalContext m) => m Id
+genId = QCT.arbitrary'
+
+{--
 --------------------------------------
 -- STATEMENT GENERATORS  -------------
 --------------------------------------
@@ -410,16 +437,10 @@ genStmt' c 0 =
               RetVal ty -> [fmap (Ret . Just) (nol $ genExpOfType c ty)] in
   oneof $ vdecl ++ assn ++ ret
 
-{--
- - So, a few things:
- - the left exp on Assn needs to update the context
- - genVdecl needs to create a new valid id and update the context
- - Ret needs to know the return type and create the proper expression
---}
 
 genVdecl :: Ctxt -> Gen Vdecl
 genVdecl c = liftM2 Vdecl arbitrary (genNodeExp c)
-
+--}
 {--
 genBlock :: Gen Block
 genBlock = sized genBlock'
