@@ -1,17 +1,13 @@
 module Main where
 
-import System.FilePath
 import System.Environment
 
-import Ast (entryFunctionName)
 import PrettyAst (renderProg)
-import Parser (parseFile)
+import Parser (parseFileM)
 
 main :: IO ()
 main = do
   args <- getArgs
   case args of
-    (fileName : _) -> do
-      p <- parseFile fileName
-      writeFile fileName $ renderProg p
-    _ -> putStrLn "error: no input files"
+    [] -> putStrLn "error: no input files"
+    (fileName : _) -> parseFileM fileName ((writeFile fileName) . renderProg)

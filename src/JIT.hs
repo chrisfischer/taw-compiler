@@ -4,6 +4,7 @@
 module JIT (runJIT) where
 
 import Control.Monad
+import Control.Exception
 
 import Foreign.Ptr
 import Data.IORef
@@ -28,6 +29,9 @@ run fn = mkMain (castFunPtr fn :: FunPtr (IO Int64))
 defaultJit :: C.Context -> (EE.MCJIT -> IO a) -> IO a
 defaultJit c = EE.withMCJIT c (Just 0) Nothing Nothing Nothing
 
+catchAny :: IO a -> (SomeException -> IO a) -> IO a
+catchAny = Control.Exception.catch
+
 -- | Executes the given LLVM module, starting at the given function name
 runJIT :: AST.Module -> BS.ShortByteString -> Bool -> IO (Either String Int64)
 runJIT mod fentry verbose =
@@ -40,8 +44,7 @@ runJIT mod fentry verbose =
             s <- M.moduleLLVMAssembly m
             BS8.putStrLn s
           case mainfn of
-            Just fn -> do
-              res <- run fn
-              return $ Right res
+            Just fn ->
+              fmap Right (run fn) `catchAny` \e -> return $ Left $ show e
             Nothing ->
-              return $ Left $ show $ "Entry function not found: " <> fentry
+              return $ Left $ "entry function " ++ show fentry ++ " not found"

@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# OPTIONS -fwarn-incomplete-patterns #-}
 
 module LLVMGen where
@@ -33,14 +34,12 @@ import qualified LLVM.AST.IntegerPredicate as IP
 
 -- | State monad to build up a LLVM module as the AST of the source language
 -- is traversed
-newtype LLVM a = LLVM (ExceptT String (State AST.Module) a)
+newtype LLVM a = LLVM (StateT AST.Module (Except String) a)
   deriving (Functor, Applicative, Monad, MonadState AST.Module,
             MonadError String)
 
 runLLVM :: AST.Module -> LLVM a -> Either String AST.Module
-runLLVM mod (LLVM m) = case runState (runExceptT m) mod of
-                         (Left err, _) -> Left err
-                         (Right _, ll) -> Right ll
+runLLVM mod (LLVM m) = fmap snd $ runExcept $ runStateT m mod
 
 -- | Create a named empty module
 emptyModule :: ShortByteString -> AST.Module
@@ -150,28 +149,25 @@ data BlockState
 -- | State monad to build up a function's blocks as the AST of the source
 -- language is traversed
 newtype FunctionGen a =
-  FunctionGen { runFunctionGen :: ExceptT String (State FunctionGenState) a}
+  FunctionGen { runFunctionGen :: StateT FunctionGenState (Except String) a}
   deriving (Functor, Applicative, Monad, MonadState FunctionGenState,
             MonadError String)
 
 -- | Extract the generated function out of its state monad
 execFunctionGen :: FunctionGen a -> Either String FunctionGenState
 execFunctionGen m =
-  case runState (runExceptT (runFunctionGen m)) emptyFunctionGen of
-    (Left err, _) -> Left err
-    (Right _, fgen) -> Right fgen
-  where
-  -- | Create a new FunctionGen with the current block set as the entry block
-  emptyFunctionGen :: FunctionGenState
-  emptyFunctionGen = FunctionGenState
-    (AST.Name entryBlockName)
-    Map.empty
-    emptyScopedSymbolTable
-    1
-    0
-    Map.empty
-    Map.empty
-    []
+  fmap snd $ runExcept $ runStateT (runFunctionGen m) emptyFunctionGen where
+    -- | Create a new FunctionGen with the current block set as the entry block
+    emptyFunctionGen :: FunctionGenState
+    emptyFunctionGen = FunctionGenState
+      (AST.Name entryBlockName)
+      Map.empty
+      emptyScopedSymbolTable
+      1
+      0
+      Map.empty
+      Map.empty
+      []
 
 -- | Name of the first block in all functions
 entryBlockName :: ShortByteString
@@ -571,7 +567,7 @@ ret val = terminator $ AST.Do $ AST.Ret val []
 
 newtype FunctionTypeGen a =
   FunctionTypeGen {
-    runFunctionTypeGen :: ExceptT String (State FunctionTypeContext) a}
+    runFunctionTypeGen :: StateT FunctionTypeContext (Except String) a}
   deriving (Functor, Applicative, Monad, MonadState FunctionTypeContext,
             MonadError String)
 
@@ -580,9 +576,7 @@ type FunctionTypeContext = Map.Map ShortByteString AST.Type
 -- | Extract the generated function out of its state monad
 execFunctionTypeGen :: FunctionTypeGen a -> Either String FunctionTypeContext
 execFunctionTypeGen m =
-  case runState (runExceptT (runFunctionTypeGen m)) Map.empty of
-    (Left err, _) -> Left err
-    (Right _, fctxt) -> Right fctxt
+  fmap snd $ runExcept $ runStateT (runFunctionTypeGen m) Map.empty
 
 setType :: ShortByteString -> AST.Type -> FunctionTypeGen ()
 setType id ty = do

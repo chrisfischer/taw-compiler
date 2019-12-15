@@ -122,7 +122,8 @@ jitExpr :: ((MonadState LoopContext) m, MonadIO m, MonadError String m) => T.Exp
 jitExpr e = do
   updateMainRet (Just e) (T.RetVal T.TInt)
   ctxt <- get
-  res <- liftIO $ runJIT (llmod ctxt) (idToShortBS T.entryFunctionName) (verbose ctxt)
+  res <- liftIO $
+    runJIT (llmod ctxt) (idToShortBS T.entryFunctionName) (verbose ctxt)
   case res of
     Left err -> throwError err
     Right val -> liftIO $ print val

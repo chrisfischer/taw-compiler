@@ -7,8 +7,7 @@ import Text.ParserCombinators.Parsec.Language
 import qualified Text.ParserCombinators.Parsec.Token as Token
 
 import Control.Monad
-
-import System.Directory (doesDirectoryExist, getDirectoryContents)
+import Control.Monad.IO.Class
 
 import Ast
 
@@ -16,39 +15,29 @@ import Ast
 
 -- Printing / Parsing Utils
 
-parseString :: String -> String -> IO Prog
+parseString :: String -> String -> IO (Either String Prog)
 parseString s filePath =
   case parse langParser filePath s of
-    Left e -> error $ show e
-    Right p -> return p
+    Left e -> return $ Left $ show e
+    Right p -> return $ Right p
 
-parseFile :: FilePath -> IO Prog
+parseFile :: FilePath -> IO (Either String Prog)
 parseFile name = do
   s <- readFile name
   parseString s name
+
+parseFileM :: FilePath -> (Prog -> IO ()) -> IO ()
+parseFileM name m = do
+  s <- readFile name
+  res <- parseString s name
+  case res of
+    Left err -> putStrLn err
+    Right p -> liftIO $ m p
 
 parseFileTest :: FilePath -> IO ()
 parseFileTest name = do
   s <- readFile name
   parseTest langParser s
-
-parseFileD :: FilePath -> IO ()
-parseFileD name = do
-  s <- readFile $ "./tawprogs/" ++ name
-  parseTest (parserTraced "langParser" langParser) s
-
-parseAllFiles :: String -> IO ()
-parseAllFiles dir = do
-  names <- getDirectoryContents dir
-  let properNames = filter (`notElem` [".", ".."]) names
-  forM_ properNames $ \name ->
-    print name >> parseFile (dir ++ "/" ++ name)
-
-parseTawFiles :: IO ()
-parseTawFiles = parseAllFiles "./tawprogs"
-
-parseTawFile :: String -> IO Prog
-parseTawFile name = parseFile $ "./tawprogs/" ++ name
 
 -- AST Utils
 

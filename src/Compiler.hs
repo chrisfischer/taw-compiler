@@ -10,7 +10,7 @@ import qualified LLVM.Context as C
 import qualified Data.ByteString.Char8 as BS8
 
 import Frontend (cmpProg)
-import Parser (parseFile)
+import Parser (parseFileM)
 
 writeLLVM :: String -> AST.Module -> IO ()
 writeLLVM fileName ast = C.withContext $ \ctx ->
@@ -23,8 +23,7 @@ main = do
   args <- getArgs
   case args of
     [] -> putStrLn "error: no input files"
-    (fileName : _) -> do
-      p <- parseFile fileName
+    (fileName : _) -> parseFileM fileName $ \p ->
       case cmpProg fileName p of
         Left err -> putStrLn $ "error: " ++ err
         Right ll -> do
