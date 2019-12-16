@@ -60,6 +60,9 @@ Contains functions to pretty print a Taw program.
 ### PrettyAstMain.hs
 Main module for the formatter. Contains code needed to read and parse a file, and pretty print the parsed AST.
 
+### tests/Test.hs
+Contains the QuickCheck property verifying correctness between the interpreter and the compiler.
+
 ## Dependencies
 * [haskeline](https://hackage.haskell.org/package/haskeline) >=  0.7.5.0
 * [llvm-hs ](https://hackage.haskell.org/package/llvm-hs) >=  9.0.1
