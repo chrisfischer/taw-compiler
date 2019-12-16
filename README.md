@@ -22,6 +22,9 @@ The compiler consists of two modules, `Frontend` and `LLVMGen`. Start reading wi
 ### REPL
 The REPL shell is implemented in `JITMain.hs`.
 
+### Testing
+The testing module currently has one QuickCheck property. This property checks if the interpreter and compiler produce the same result on an arbitrary program. Currently, it segfaults about half of the time. We are unsure if this is a problem with the generator or the compiler, as we did not have enough time to debug.
+
 ## Files
 
 ### Ast.hs
