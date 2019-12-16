@@ -105,11 +105,9 @@ instance QCT.MonadGen (StateT s Gen) where
 -- | Execute the generator given a main funty and a list of other funtys
 execAstGenerator :: FunTy -> [FunTy] ->  Gen [Fdecl]
 execAstGenerator main fs =
-  let contextGen = execStateT m (initGlobalContext main fs) in -- QCT.runGenT $
+  let contextGen = execStateT genProg (initGlobalContext main fs) in
   fmap ((map fCtxtToFdecl) . Map.elems . contexts) contextGen
   where
-    m :: StateT GlobalContext Gen ()
-    m = genProg
     fCtxtToFdecl :: FunctionContext -> Fdecl
     fCtxtToFdecl (FunctionContext fty (FunctionSubContext Nothing _ _ _ block)) = funTytoFdecl fty (reverse block)
     fCtxtToFdecl _ = error "Subcontext is not root"
@@ -337,7 +335,7 @@ genBoolExp = QCT.sized genBoolExp'
 genBoolExp' :: (QCT.MonadGen m, MonadState GlobalContext m) => Int -> m Exp
 genBoolExp' 0 = do
   ids   <- inScopeVarsWithType TBool
-  QCT.liftGen $ oneof $ [CBool <$> arbitrary] ++ if (length ids > 0) 
+  QCT.liftGen $ oneof $ [CBool <$> arbitrary] ++ if (length ids > 0)
                                                  then [elements $ Id <$> ids]
                                                  else []
 genBoolExp' n | n > 0 = do
@@ -349,7 +347,7 @@ genBoolExp' n | n > 0 = do
                liftM3 Bop genBoolBinop boolExp boolExp  ,
                liftM3 Bop genOrdCompBinop intExp intExp ,
                liftM3 Bop genEqCompBinop intExp intExp  ,
-               liftM3 Bop genEqCompBinop boolExp boolExp] 
+               liftM3 Bop genEqCompBinop boolExp boolExp]
               ++ if canCall then [genCallExpWithType TBool] else []
     where boolExp = noLoc <$> (genBoolExp' n')
           intExp  = noLoc <$> (genIntExp'  n')
@@ -362,7 +360,7 @@ genIntExp = QCT.sized genIntExp'
 genIntExp' :: (QCT.MonadGen m, MonadState GlobalContext m) => Int -> m Exp
 genIntExp' 0 = do
   ids <- inScopeVarsWithType TInt
-  QCT.liftGen $ oneof $ [CInt <$> arbitrary] ++ if (length ids > 0) 
+  QCT.liftGen $ oneof $ [CInt <$> arbitrary] ++ if (length ids > 0)
                                                 then [elements $ Id <$> ids]
                                                 else []
 genIntExp' n | n > 0 =
@@ -375,10 +373,10 @@ genIntExp' n | n > 0 =
 genCallExpWithType :: (QCT.MonadGen m, MonadState GlobalContext m) => Ty -> m Exp
 genCallExpWithType ty = do
   currFunId <- gets currentFun
-  callTys   <- inScopeCallTysWithRetType ty 
+  callTys   <- inScopeCallTysWithRetType ty
   -- prevent recursion
   let callTys' = filter (\ct@(CallTy id _ _) -> id /= currFunId) callTys
-  -- don't call functions that take other functions as arguments TODO: allow this 
+  -- don't call functions that take other functions as arguments TODO: allow this
       callTys'' = filter (\ct@(CallTy _ tys _) -> foldr notFuncType True tys) callTys'
       numFuns = length callTys''
   if numFuns == 0
@@ -392,7 +390,7 @@ genCallExpWithType ty = do
     return $ Call (noLoc $ Id id) (noLoc <$> args)
   where
     notFuncType :: Ty -> Bool -> Bool
-    notFuncType ty acc = (ty == TInt || ty == TBool) && acc 
+    notFuncType ty acc = (ty == TInt || ty == TBool) && acc
     getVal :: [Exp] -> [Exp] -> (Ty, Int) -> Exp
     getVal bools ints (ty, i) = case ty of
                                     TBool -> bools !! i
@@ -456,7 +454,7 @@ genAssnStmt = do
   ty    <- genPrimitiveTy
   exp   <- genExpWithType ty
   vars  <- inScopeVarsWithType ty
-  if (length vars) == 0 
+  if (length vars) == 0
   then genDeclStmt
   else do
     index <- QCT.liftGen $ choose (0, (length vars) - 1)
@@ -512,7 +510,7 @@ genMaybeBlock = do
 
 -- | Generate a while statment that's guaranteed to terminate
 -- Method: declare a new integer, but don't add it to the context
--- Therefore, nothing else will change it. At the end of the 
+-- Therefore, nothing else will change it. At the end of the
 -- generated block, add a statement to increment its value
 -- so that it approaches the termination condition.
 genWhileStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
@@ -527,7 +525,7 @@ genWhileStmt = do
       cond = Bop Lt var (noLoc $ CInt numIters)
       assn :: Block
       assn = [noLoc $ Assn var (noLoc $ Bop Add var (noLoc $ CInt 1))]
-  pushStmt $ While (noLoc cond) (assn ++ block) 
+  pushStmt $ While (noLoc cond) (assn ++ block)
 
 -- | Generate a for loop that's guaranteed to terminate
 -- Method: don't add the initialized vars to context so
@@ -538,11 +536,11 @@ genForStmt = do
   id       <- genFreshId
   pushSubContext
   QCT.listOf genSimpleStmt
-  block <- popSubContext 
+  block <- popSubContext
   let decls  = [Vdecl id (noLoc $ CInt 0)] -- did not add this variable to ctxt
       var    = noLoc $ Id id
       cond   = Bop Lt var (noLoc $ CInt numIters)
-      update = Assn var (noLoc $ Bop Add var (noLoc $ CInt 1)) 
+      update = Assn var (noLoc $ Bop Add var (noLoc $ CInt 1))
   pushStmt $ For decls (Just $ noLoc cond) (Just $ noLoc update) block
 
 -- Top Level Generators

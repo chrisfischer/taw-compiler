@@ -3,22 +3,17 @@
 
 module Main where
 
-import Foreign.Ptr
-import Data.IORef
-import Data.Word
 import Data.Int
-import qualified Data.ByteString.Short as BS
-import qualified Data.ByteString.Char8 as BS8
 
-import LLVM.AST.Global
-import LLVM.AST.Constant
-import qualified LLVM.Module as M
-import qualified LLVM.Context as C
-import qualified LLVM.AST as AST
-import qualified LLVM.ExecutionEngine as EE
+import Control.Monad.IO.Class
 
--- import Ast
--- import JIT
+import Test.QuickCheck
+import Test.QuickCheck.Monadic
+
+import Ast
+import JIT (runJIT)
+import Frontend (cmpProg, idToShortBS)
+import Interpreter (executeProg, ValueTy(VInt))
 
 -- int :: AST.Type
 -- int = AST.IntegerType 64
@@ -66,9 +61,17 @@ import qualified LLVM.ExecutionEngine as EE
 --   , Gfdecl $ noLoc testFDecl3
 --   , Gfdecl $ noLoc testFDecl ]
 
+prop_interpCmp :: Prog -> Property
+prop_interpCmp p = monadicIO $ do
+  case cmpProg "module" p of
+    Left err -> error err
+    Right ll -> do
+      let resInterp = executeProg p entryFunctionName
+      resCmp <- liftIO $ runJIT ll (idToShortBS entryFunctionName) False
+      case (resInterp, resCmp) of
+        (Right (VInt v1), Right v2) -> assert $ v1 == fromIntegral v2
+        _ -> error "Bad"
+
 
 main :: IO ()
-main = do
-  res <- runJIT module_ "main" False
-  putStrLn "Eager JIT Result:"
-  print res
+main = return () -- quickCheckWith stdArgs { maxSuccess = 1 } prop_interpCmp

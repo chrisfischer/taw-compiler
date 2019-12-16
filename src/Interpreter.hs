@@ -324,8 +324,8 @@ runBlock :: Block ->
             (Either (Int, String) (), GlobalContext)
 runBlock = runState . runExceptT . runInterp . evalB
 
-executeProg :: Id -> Prog -> Either (Int, String) ValueTy
-executeProg entry prog =
+executeProg :: Prog -> Id -> Either (Int, String) ValueTy
+executeProg prog entry =
   let entryF = find (\g -> nameFromDecl g == entry) prog in
   case entryF of
     Just (Gfdecl nf@(Node (Fdecl _ _ [] b) _)) ->
@@ -343,9 +343,9 @@ executeProg entry prog =
     Nothing -> Left (7, "Could not find entry function")
 
 
-run :: Id -> Prog -> IO ()
-run entry prog = do
-  let r = executeProg entry prog
+runInterpreter :: Prog -> Id -> IO ()
+runInterpreter prog entry = do
+  let r = executeProg prog entry
   putStrLn (display r)
   where
     -- Display either the error or resulting value
