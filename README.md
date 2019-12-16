@@ -65,3 +65,6 @@ Main module for the formatter. Contains code needed to read and parse a file, an
 * [llvm-hs ](https://hackage.haskell.org/package/llvm-hs) >=  9.0.1
 * [llvm-hs-pure](https://hackage.haskell.org/package/llvm-hs-pure) >=  9.0.0
 * [parsec](https://hackage.haskell.org/package/parsec) >=  3.1
+* [QuickCheck-GenT](https://hackage.haskell.org/package/QuickCheck-GenT) >= 0.2.2
+* [string-random](https://hackage.haskell.org/package/string-random) >= 0.1.2.0
+* [quickcheck-string-random](https://hackage.haskell.org/package/quickcheck-string-random) >= 0.1.3.0
