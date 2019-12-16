@@ -27,30 +27,47 @@ import PrettyAst
 -- UTILS - ---------------------------
 --------------------------------------
 
-nol x = noLoc <$> x
+-- | Print 10 programs to the stdout
+run :: IO ()
+run = sample $ progGen
 
-emptyFdecl r fn as = Fdecl r fn as []
+-- | Output a program in the IO Monad
+run' :: IO Prog
+run' = generate $ progGen
 
--- | The type of the main function in every possible program
+-- Data Types
+
+-- | Name, arg types and names, return type (must not be void)
+data FunTy = FunTy Id [(Ty, Id)] Ty deriving Show
+-- | Name, arg types, return type (used to generate call expressions)
+data CallTy = CallTy Id [Ty] Ty deriving Show
+
+-- Entry Points
+
+instance Arbitrary Prog where
+  arbitrary = progGen
+
 mainTy :: FunTy
 mainTy = FunTy "main" [] TInt
 
--- variables for testing
-funTys :: [FunTy]
-funTys = [ --FunTy "f1" [(TInt, "a1"), (TInt, "a2")] TInt
-         --  FunTy "f2" [(TBool, "b1")] TBool
-         --, FunTy "f3" [(TBool, "c1"), (TBool, "c2")] TBool
-         --, FunTy "f4" [(TBool, "d1"), (TBool, "d2")] TBool
-         -- FunTy "f5" [(TRef $ RFun [] (RetVal TBool), "e1_f")] TBool
-          FunTy "f6" [(TRef $ RFun [TBool] (RetVal TBool), "f1_f")] TBool
-         ]
+-- | Top Level Generator for Prog data type
+progGen :: Gen Prog
+progGen = do
+  numFuns <- choose (0, 2) -- 3 functions cause stack overflow
+  ftys <- vectorOf numFuns genFunTy
+  execAstGenerator mainTy ftys
 
-run = sample $ execAstGenerator mainTy funTys
-run' = generate $ progGen -- execAstGenerator mainTy funTys
-
--- Name, arg types and names, return type (must not be void)
-data FunTy = FunTy Id [(Ty, Id)] Ty deriving Show
-data CallTy = CallTy Id [Ty] Ty deriving Show
+-- | Execute the generator given a main funty and a list of other funtys
+execAstGenerator :: FunTy -> [FunTy] -> Gen Prog
+execAstGenerator main fs =
+  let contextGen = execStateT genProg (initGlobalContext main fs) in
+  fmap (Prog . (map (Gfdecl . noLoc . fCtxtToFdecl)) . Map.elems . contexts) contextGen
+  where
+    fCtxtToFdecl :: FunctionContext -> Fdecl
+    fCtxtToFdecl (FunctionContext fty (FunctionSubContext Nothing _ _ _ block)) = funTytoFdecl fty (reverse block)
+    fCtxtToFdecl _ = error "Subcontext is not root"
+    funTytoFdecl :: FunTy -> Block -> Fdecl
+    funTytoFdecl (FunTy fn args retty) b = Fdecl (RetVal retty) fn args b
 
 --------------------------------------
 -- CONTEXT ---------------------------
@@ -98,32 +115,6 @@ instance QCT.MonadGen (StateT s Gen) where
   sized f = StateT $ \state -> sized $ \size -> runStateT (f size) state
   resize = mapStateT . QCT.resize
   choose = lift . QCT.choose
-
--- Entry Points
-
-instance Arbitrary Prog where
-  arbitrary = progGen -- execAstGenerator mainTy funtys
-
-
--- | Gen Prog
-progGen :: Gen Prog
-progGen = do
-  numFuns <- choose (0, 2) -- maximum 2 functions
-  ftys <- vectorOf numFuns genFunTy
-  execAstGenerator mainTy ftys
-
--- | Execute the generator given a main funty and a list of other funtys
-execAstGenerator :: FunTy -> [FunTy] -> Gen Prog
-execAstGenerator main fs =
-  let contextGen = execStateT genProg (initGlobalContext main fs) in
-  fmap (Prog . (map (Gfdecl . noLoc . fCtxtToFdecl)) . Map.elems . contexts) contextGen
-  where
-    fCtxtToFdecl :: FunctionContext -> Fdecl
-    fCtxtToFdecl (FunctionContext fty (FunctionSubContext Nothing _ _ _ block)) = funTytoFdecl fty (reverse block)
-    fCtxtToFdecl _ = error "Subcontext is not root"
-    funTytoFdecl :: FunTy -> Block -> Fdecl
-    funTytoFdecl (FunTy fn args retty) b = Fdecl (RetVal retty) fn args b
-
 
 -- Convienience Initializers
 
@@ -260,25 +251,6 @@ declVar x ty = do
     currSubCtxt = currSub {
       vars = vars', tysToVars = tysToVars' } }
 
--- TODO: finish this associated with genAssn
--- | Finds the first function text where the argued Id was declared
--- or Nothing if no such context can be found
---findSubContextWithId :: (QCT.MonadGen m, MonadState GlobalContext m) =>
---                        Id -> m
-
--- | Updates the binding for the argued Id in the first context where it appears
---assnVar :: (QCT.MonadGen m, MonadState GlobalContext m) =>
---           Id -> Ty -> m ()
---assnVar id ty = do
---  curr <- currentFunctionContext
---  let currSub = currSubCtxt curr
---      subWithId = findSubcontextWithId id
---      oldTy = (vars subWithId) ! id
---      vars' = Map.adjust (\_ -> ty) id (vars subWithId)
---      tysToVars' = Map.adjust (ids -> Just $ List.delete id ids) oldTy (tysToVars subWithId)
---      tysToVars'' = Map.adjust (ids -> Just $ id:ids) ty tysToVars'
-
-
 -- | Creates a new context with the current as its parent with the same name
 pushSubContext :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
 pushSubContext = do
@@ -323,12 +295,16 @@ genIntUnop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Unop
 genIntUnop = QCT.liftGen $ return Ast.Neg
 
 genIntBinop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Binop
+<<<<<<< HEAD
 genIntBinop = QCT.liftGen $ elements [Ast.Add, Ast.Sub, Ast.Mul]
 <<<<<<< HEAD
 -- ^ TODO: add logical operators here
 =======
 -- ^ TODO: add logical operators here, readd Div and Mod , Ast.Div, Ast.Mod
 >>>>>>> WIP
+=======
+genIntBinop = QCT.liftGen $ elements [Ast.Add, Ast.Sub, Ast.Mul, Ast.IAnd, Ast.IOr, Ast.Shl, Ast.Shr]
+>>>>>>> working
 
 genOrdCompBinop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Binop
 genOrdCompBinop = QCT.liftGen $ elements [Ast.Lt, Ast.Lte, Ast.Gt, Ast.Gte]
@@ -364,8 +340,8 @@ genBoolExp' n | n > 0 = do
                liftM3 Bop genBoolBinop boolExp boolExp  ,
                liftM3 Bop genOrdCompBinop intExp intExp ,
                liftM3 Bop genEqCompBinop intExp intExp  ,
-               liftM3 Bop genEqCompBinop boolExp boolExp]
-              ++ if canCall then [genCallExpWithType TBool] else []
+               liftM3 Bop genEqCompBinop boolExp boolExp,
+               genCallExpWithType TBool                 ]
     where boolExp = noLoc <$> (genBoolExp' n')
           intExp  = noLoc <$> (genIntExp'  n')
           n'      = n `div` 5 -- 2 and 3 produce stack overflows, went with 5 to be safe
@@ -402,10 +378,10 @@ genCallExpWithType ty = do
   if numFuns == 0
   then QCT.resize 0 (genExpWithType ty) -- default to a non-call expression
   else do
-    index   <- QCT.liftGen $ choose (0, (length callTys'') - 1)
+    index   <- QCT.liftGen $ choose (0, (length callTys'') - 1) 
     let (CallTy id tys rty) = callTys'' !! index
-    bools   <- QCT.vectorOf (length tys) genBoolExp
-    ints    <- QCT.vectorOf (length tys) genIntExp
+    bools   <- QCT.vectorOf (length tys) (QCT.resize 0 genBoolExp) -- more than 0 causes stack overflow
+    ints    <- QCT.vectorOf (length tys) (QCT.resize 0 genIntExp)
     let args = map (getVal bools ints) (zip tys [0..((length tys) - 1)])
     return $ Call (noLoc $ Id id) (noLoc <$> args)
   where
@@ -417,29 +393,13 @@ genCallExpWithType ty = do
                                     TInt  -> ints !! i
                                     _     -> error "Function types should be filtered out"
 
-
--- Type Generators
+-- QCT Type Generators
 
 -- | Generate an arbitrary primitive Ty
 genPrimitiveTy :: (QCT.MonadGen m, MonadState GlobalContext m) => m Ty
 genPrimitiveTy = QCT.elements [TBool, TInt]
 
--- | Generate an arbitrary Ty
-genTy :: Gen Ty
-genTy = QCT.sized genTy'
-
-genTy' :: Int -> Gen Ty
-genTy' 0 = genPrimTy
-genTy' n | n > 0 =
-  QCT.oneof [genTy' 0                              ,
-             TRef <$> (genRty' (n `div` 2 `mod` 3))] -- TODO: improve this limit strategy
-
--- | Generate an arbitrary Rty (function type)
-genRty :: Gen Rty
-genRty = QCT.sized genRty'
-
-genRty' :: Int -> Gen Rty
-genRty' n = liftM2 RFun (QCT.listOf $ genTy' n) genRetty
+-- Gen Type Generators
 
 -- | Generate an arbitrary return type
 genRetty :: Gen Retty
@@ -451,7 +411,7 @@ genRetty = RetVal <$> genPrimTy
 genFunTy :: Gen FunTy
 genFunTy = do
   funId   <- genFreshId'
-  numArgs <- choose (0, 10) -- limit to 10 args
+  numArgs <- choose (0, 5) -- limit to 5 args
   args    <- vectorOf numArgs genArg
   rty     <- genPrimTy
   return $ FunTy funId args rty
@@ -467,16 +427,16 @@ genArg = do
 -- | Generate a function type Rty whose arguments are all primitives
 genSimpleTRef :: Gen Ty
 genSimpleTRef = do
-  numArgs <- choose (0, 10)
+  numArgs <- choose (0, 3) -- limit to 3 args
   args    <- vectorOf numArgs genPrimTy
-  rty     <- genPrimTy
-  return $ TRef $ RFun args (RetVal rty)
+  rty     <- genRetty
+  return $ TRef $ RFun args rty
 
 -- | Generate a FunTy whose arguments are all primitives
 genSimpleFunTy :: Gen FunTy
 genSimpleFunTy = do
   funId   <- genFreshId'
-  numArgs <- choose (0, 10) -- limit to 10 args
+  numArgs <- choose (0, 3) -- limit to 3 args
   args    <- vectorOf numArgs genSimpleArg
   rty     <- genPrimTy
   return $ FunTy funId args rty
@@ -527,18 +487,8 @@ genAssnStmt = do
     index <- QCT.liftGen $ choose (0, (length vars) - 1)
     let id = vars !! index
     pushStmt $ Assn (noLoc $ Id id) (noLoc exp)
--- TODO: be able to change var types and update context accordingly
---  varsToTys <- inScopeVars
---  index     <- QCT.liftGen $ choose (0, (Map.size varsToTys))
---  (id, ty)  <- (Map.elems varsToTys) !! index
---  ty'       <- genPrimitiveTy
---  exp       <- genExpOfTy ty'
---  if ty == ty'
---  then return $ Assn (noLoc $ id) (noLoc exp)
---  else error "need to implement the context updating" -- TODO
 
--- | Generate a declaration statement, update the state to include
--- the new variable, and push the statement to the context
+-- | Generate an arbitrary delcaration statement and push it to the context
 genDeclStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
 genDeclStmt = do
   (ty, vdecl@(Vdecl id nexp)) <- genVdeclWithType
@@ -627,80 +577,11 @@ genProg = do
 
 -- Helpers
 
--- | Generate a fresh arbitrary variable name TODO: readd that library I was using for this
+-- | QCT Monad: Generate a fresh arbitrary variable name
 genFreshId :: (QCT.MonadGen m, MonadState GlobalContext m) => m Id
-genFreshId = QCT.liftGen $ unpack <$> (matchRegexp $ pack "[a-z]\\w+") -- QCT.arbitrary'
+genFreshId = QCT.liftGen $ unpack <$> (matchRegexp $ pack "[a-z]\\w+")
 
+-- | Gen Monad: Generate a fresh arbitrary variable name
 genFreshId' :: Gen Id
-genFreshId' = unpack <$> (matchRegexp $ pack "[a-z]\\w+") -- QCT.arbitrary'
+genFreshId' = unpack <$> (matchRegexp $ pack "[a-z]\\w+") 
 
-
-{--
---------------------------------------
--- STATEMENT GENERATORS  -------------
---------------------------------------
-
-genMaybeNodeStmt :: Ctxt -> Gen (Maybe (Node Stmt))
-genMaybeNodeStmt c =
-  oneof [Just <$> genNodeStmt c,
-         return Nothing        ]
-
-genNodeStmt :: Ctxt -> Gen (Node Stmt)
-genNodeStmt c = sized (genNodeStmt' c)
-
-genNodeStmt' :: Ctxt -> Int -> Gen (Node Stmt)
-genNodeStmt' c n = noLoc <$> (genStmt' c n)
-
-genStmt :: Ctxt -> Gen Stmt
-genStmt c = sized (genStmt' c)
-
-genStmt':: Ctxt -> Int -> Gen Stmt
-genStmt' c 0 =
-  let vdecl = [Decl <$> (genVdecl c)] in
-  let assn = case genFreshIdExpOpt c of
-               Nothing    -> []
-               Just idGen -> [liftM2 Assn (nol idGen) (genNodeExp c)] in
-  let ret = case currentRetty c of
-              RetVoid   -> []
-              RetVal ty -> [fmap (Ret . Just) (nol $ genExpWithType c ty)] in
-  oneof $ vdecl ++ assn ++ ret
-
-
-genVdecl :: Ctxt -> Gen Vdecl
-genVdecl c = liftM2 Vdecl arbitrary (genNodeExp c)
---}
-{--
-genBlock :: Gen Block
-genBlock = sized genBlock'
-
-genBlock' :: Int -> Gen Block
-genBlock' 0 =  return []
-genBlock' n | n > 0 =
-  vectorOf n' (genNodeStmt' n')
-  where n' = n `div` 2
-
-genStmt' :: Vars -> Int -> Gen Stmt
-genStmt' vars 0 =
-  oneof [liftM2 Assn genNodeExp genNodeExp            ,
-         fmap   Decl genVdecl                         ,
-         fmap   Ret  genNodeExp                       ,
-         liftM3 If   genNodeEx genBlock genBlock      ,
-         liftM4 For  (listOf genVdecl) genMaybeNodeExp
-                     genMaybeNodeStmt  genBlock       ]
-
-genArgs :: Gen [(Ty, Id)]
-genArgs = listOf genArg
-
-genArg :: Gen (Ty, Id)
-genArg = liftM2 (,) genTy arbitrary
-
-genFdecl :: Gen Fdecl
-genFdecl = liftM4 Fdecl genRetty arbitrary genArgs genBlock
-
-genDecl :: Gen Decl
-genDecl = Gfdecl . noLoc <$> genFdecl
-
-genProg :: Gen Prog
-genProg = listOf genDecl
-
---}
