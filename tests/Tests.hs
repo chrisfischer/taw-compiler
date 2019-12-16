@@ -29,14 +29,12 @@ prop_interpCmp p = monadicIO $ do
         (Left err, _) -> showError err
         (_, Left err) -> showError err
   where
-    showError err = do
-      liftIO $ putStrLn $ renderProg p
-      error $ show err
+    showError err = error $ show err
 
 main :: IO ()
 main = do
-  p <- run'
-  putStrLn $ renderProg p
+  -- p <- run'
+  -- putStrLn $ renderProg p
   -- cmpProgM "wat" p $ \ll -> void $ runJIT ll (idToShortBS entryFunctionName) False
   quickCheckWith stdArgs { maxSuccess = 10 } prop_interpCmp
-  return ()
+  -- return ()

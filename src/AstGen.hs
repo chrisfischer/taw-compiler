@@ -295,16 +295,7 @@ genIntUnop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Unop
 genIntUnop = QCT.liftGen $ return Ast.Neg
 
 genIntBinop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Binop
-<<<<<<< HEAD
-genIntBinop = QCT.liftGen $ elements [Ast.Add, Ast.Sub, Ast.Mul]
-<<<<<<< HEAD
--- ^ TODO: add logical operators here
-=======
--- ^ TODO: add logical operators here, readd Div and Mod , Ast.Div, Ast.Mod
->>>>>>> WIP
-=======
 genIntBinop = QCT.liftGen $ elements [Ast.Add, Ast.Sub, Ast.Mul, Ast.IAnd, Ast.IOr, Ast.Shl, Ast.Shr]
->>>>>>> working
 
 genOrdCompBinop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Binop
 genOrdCompBinop = QCT.liftGen $ elements [Ast.Lt, Ast.Lte, Ast.Gt, Ast.Gte]
@@ -378,7 +369,7 @@ genCallExpWithType ty = do
   if numFuns == 0
   then QCT.resize 0 (genExpWithType ty) -- default to a non-call expression
   else do
-    index   <- QCT.liftGen $ choose (0, (length callTys'') - 1) 
+    index   <- QCT.liftGen $ choose (0, (length callTys'') - 1)
     let (CallTy id tys rty) = callTys'' !! index
     bools   <- QCT.vectorOf (length tys) (QCT.resize 0 genBoolExp) -- more than 0 causes stack overflow
     ints    <- QCT.vectorOf (length tys) (QCT.resize 0 genIntExp)
@@ -583,5 +574,5 @@ genFreshId = QCT.liftGen $ unpack <$> (matchRegexp $ pack "[a-z]\\w+")
 
 -- | Gen Monad: Generate a fresh arbitrary variable name
 genFreshId' :: Gen Id
-genFreshId' = unpack <$> (matchRegexp $ pack "[a-z]\\w+") 
+genFreshId' = unpack <$> (matchRegexp $ pack "[a-z]\\w+")
 
