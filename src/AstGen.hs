@@ -102,6 +102,12 @@ instance QCT.MonadGen (StateT s Gen) where
 
 -- Entry Points
 
+-- | Gen Prog
+progGen :: Gen Prog
+progGen = do
+  fdecls <- execAstGenerator mainTy funTys
+  return $ (Gfdecl . noLoc) <$> fdecls
+
 -- | Execute the generator given a main funty and a list of other funtys
 execAstGenerator :: FunTy -> [FunTy] ->  Gen [Fdecl]
 execAstGenerator main fs =
