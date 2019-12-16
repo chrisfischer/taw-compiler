@@ -1,7 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# OPTIONS -fwarn-incomplete-patterns #-}
 
 module AstGen where
 
@@ -317,7 +316,7 @@ genBoolBinop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Binop
 genBoolBinop = QCT.liftGen $ elements [Ast.And, Ast.Or]
 
 genIntBinop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Binop
-genIntBinop = QCT.liftGen $ elements [Ast.Add, Ast.Sub, Ast.Mul, Ast.Div, Ast.Mod]
+genIntBinop = QCT.liftGen $ elements [Ast.Add, Ast.Sub, Ast.Mul]
 -- ^ TODO: add logical operators here
 
 genOrdCompBinop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Binop
