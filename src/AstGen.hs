@@ -311,7 +311,7 @@ pushStmt s = do
 -- Operator Generators
 
 genBoolUnop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Unop
-genBoolUnop = QCT.liftGen $ return Ast.Neg
+genBoolUnop = QCT.liftGen $ return Ast.Lognot
 
 genBoolBinop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Binop
 genBoolBinop = QCT.liftGen $ elements [Ast.And, Ast.Or]

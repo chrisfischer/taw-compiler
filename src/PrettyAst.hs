@@ -62,7 +62,7 @@ instance PP Exp where
     ppx = pp x
     ppy = pp y
   pp (Uop op (Node e _)) = PP.hcat [pp op, p] where
-    p = if expLevel e < ulevel op then PP.parens ppe else ppe
+    p = if expLevel e <= ulevel op then PP.parens ppe else ppe
     ppe = pp e
 
 instance PP Vdecl where
