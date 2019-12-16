@@ -108,7 +108,7 @@ instance Arbitrary Prog where
 -- | Gen Prog
 progGen :: Gen Prog
 progGen = do
-  numFuns <- choose (0, 10) -- maximum 10 functions
+  numFuns <- choose (0, 2) -- maximum 2 functions
   ftys <- vectorOf numFuns genFunTy
   execAstGenerator mainTy ftys
 
@@ -428,8 +428,8 @@ genPrimitiveTy = QCT.elements [TBool, TInt]
 genTy :: Gen Ty
 genTy = QCT.sized genTy'
 
-genTy' :: Gen Ty
-genTy' 0 = genPrimitiveTy
+genTy' :: Int -> Gen Ty
+genTy' 0 = genPrimTy
 genTy' n | n > 0 =
   QCT.oneof [genTy' 0                              ,
              TRef <$> (genRty' (n `div` 2 `mod` 3))] -- TODO: improve this limit strategy
@@ -443,14 +443,14 @@ genRty' n = liftM2 RFun (QCT.listOf $ genTy' n) genRetty
 
 -- | Generate an arbitrary return type
 genRetty :: Gen Retty
-genRetty = RetVal <$> genPrimitiveTy
+genRetty = RetVal <$> genPrimTy
 
 -- | Generate FunTy that is a good candidate for our context
 -- in that any arguments that are functions will take only
 -- primitives for their arguments
 genFunTy :: Gen FunTy
 genFunTy = do
-  funId   <- genFreshId
+  funId   <- genFreshId'
   numArgs <- choose (0, 10) -- limit to 10 args
   args    <- vectorOf numArgs genArg
   rty     <- genPrimTy
@@ -460,14 +460,22 @@ genFunTy = do
 -- a function whose arguments are all primitives
 genArg :: Gen (Ty, Id)
 genArg = do
-  ty <- frequency [(1, genSimpleFunTy), (4, genPrimTy)]
-  id <- genFreshId
+  ty <- frequency [(1, genSimpleTRef), (4, genPrimTy)]
+  id <- genFreshId'
   return $ (ty, id)
+
+-- | Generate a function type Rty whose arguments are all primitives
+genSimpleTRef :: Gen Ty
+genSimpleTRef = do
+  numArgs <- choose (0, 10)
+  args    <- vectorOf numArgs genPrimTy
+  rty     <- genPrimTy
+  return $ TRef $ RFun args (RetVal rty)
 
 -- | Generate a FunTy whose arguments are all primitives
 genSimpleFunTy :: Gen FunTy
 genSimpleFunTy = do
-  funId   <- genFreshId
+  funId   <- genFreshId'
   numArgs <- choose (0, 10) -- limit to 10 args
   args    <- vectorOf numArgs genSimpleArg
   rty     <- genPrimTy
@@ -477,7 +485,7 @@ genSimpleFunTy = do
 genSimpleArg :: Gen (Ty, Id)
 genSimpleArg = do
   ty <- genPrimTy
-  id <- genFreshId
+  id <- genFreshId'
   return $ (ty, id)
 
 -- | Generate a primitive type
@@ -622,6 +630,10 @@ genProg = do
 -- | Generate a fresh arbitrary variable name TODO: readd that library I was using for this
 genFreshId :: (QCT.MonadGen m, MonadState GlobalContext m) => m Id
 genFreshId = QCT.liftGen $ unpack <$> (matchRegexp $ pack "[a-z]\\w+") -- QCT.arbitrary'
+
+genFreshId' :: Gen Id
+genFreshId' = unpack <$> (matchRegexp $ pack "[a-z]\\w+") -- QCT.arbitrary'
+
 
 {--
 --------------------------------------
