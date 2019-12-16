@@ -69,11 +69,11 @@ emptyGlobalContext entry = GlobalContext (emptyFunctionContext entry) Map.empty
 
 -- | Initializes context with global decls and sets functions
 gCtxtFromProg :: Prog -> Node Fdecl -> Either (Int, String) GlobalContext
-gCtxtFromProg prog entry =
+gCtxtFromProg (Prog prog) entry =
   (\fs -> (emptyGlobalContext entry) { fdecls = Map.fromList fs }) <$>
     unwrap prog
   where
-    unwrap :: Prog -> Either (Int, String) [(Id, Node Fdecl)]
+    unwrap :: [Decl] -> Either (Int, String) [(Id, Node Fdecl)]
     unwrap [] = Right []
     unwrap (Gfdecl f@(Node (Fdecl _ fname _ _) _) : xs) =
       ((fname, f):) <$> unwrap xs
@@ -325,11 +325,11 @@ runBlock :: Block ->
 runBlock = runState . runExceptT . runInterp . evalB
 
 executeProg :: Prog -> Id -> Either (Int, String) ValueTy
-executeProg prog entry =
+executeProg p@(Prog prog) entry =
   let entryF = find (\g -> nameFromDecl g == entry) prog in
   case entryF of
     Just (Gfdecl nf@(Node (Fdecl _ _ [] b) _)) ->
-      let gCtxt = gCtxtFromProg prog nf in
+      let gCtxt = gCtxtFromProg p nf in
       case gCtxt of
         Right startCtxt ->
           let (res, finalCtxt) = runBlock b startCtxt in

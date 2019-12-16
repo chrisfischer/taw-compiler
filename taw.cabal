@@ -16,6 +16,7 @@ executable tawcmp
     Frontend
     LLVMGen
     Parser
+    PrettyAst
   build-depends:
       base                 >= 4.7 && <5
     , llvm-hs              >= 9.0.1
@@ -27,6 +28,7 @@ executable tawcmp
     , bytestring           >= 0.10
     , filepath             >= 1.4.2.1
     , directory            >= 1.3.3.0
+    , pretty               >= 1.1.3.6
 
 executable tawinterp
   default-language:    Haskell2010
@@ -36,8 +38,9 @@ executable tawinterp
     tests
   other-modules:
     Ast
-    Parser
     Interpreter
+    Parser
+    PrettyAst
   build-depends:
       base                 >= 4.7 && <5
     , parsec               >= 3.1
@@ -47,7 +50,7 @@ executable tawinterp
     , bytestring           >= 0.10
     , filepath             >= 1.4.2.1
     , directory            >= 1.3.3.0
-
+    , pretty               >= 1.1.3.6
 
 executable qc_test
   default-language:    Haskell2010
@@ -57,11 +60,12 @@ executable qc_test
     tests
   other-modules:
     Ast
+    AstGen
     Frontend
     Interpreter
     JIT
     LLVMGen
-    AstGen
+    PrettyAst
   build-depends:
       base                 >= 4.7 && <5
     , haskeline            >= 0.7.5.0
@@ -75,7 +79,7 @@ executable qc_test
     , QuickCheck-GenT      >= 0.2.2
     , text                 >= 1.2.3.1
     , quickcheck-string-random >= 0.1.3.0
-
+    , pretty               >= 1.1.3.6
 
 executable tawrepl
   default-language:    Haskell2010
@@ -84,9 +88,10 @@ executable tawrepl
   other-modules:
     Ast
     Frontend
+    JIT
     LLVMGen
     Parser
-    JIT
+    PrettyAst
   build-depends:
       base                 >= 4.7 && <5
     , haskeline            >= 0.7.5.0
@@ -99,7 +104,7 @@ executable tawrepl
     , bytestring           >= 0.10
     , filepath             >= 1.4.2.1
     , directory            >= 1.3.3.0
-
+    , pretty               >= 1.1.3.6
 
 executable tawformat
   default-language:    Haskell2010
@@ -107,8 +112,8 @@ executable tawformat
   hs-source-dirs:      src
   other-modules:
     Ast
-    PrettyAst
     Parser
+    PrettyAst
   build-depends:
       base                 >= 4.7 && <5
     , parsec               >= 3.1
@@ -119,47 +124,3 @@ executable tawformat
     , filepath             >= 1.4.2.1
     , directory            >= 1.3.3.0
     , pretty               >= 1.1.3.6
-
--- executable comparison_test
---   default-language:    Haskell2010
---   main-is:             ComparisonTest.hs
---   hs-source-dirs:      src
---   default-extensions:  FlexibleContexts
---   other-modules:
---     Ast
---     Interpreter
---   build-depends:
---       base                 >= 4.7 && <5
---     , haskeline            >= 0.7.5.0
---     , llvm-hs              >= 9.0.1
---     , llvm-hs-pure         >= 9.0.0
---     , parsec               >= 3.1
---     , mtl                  >= 2.1.3
---     , transformers         >= 0.3.0.0 && < 0.6
---     , containers           >= 0.4
---     , bytestring           >= 0.10
---     , QuickCheck           >= 2.13
---     , directory            >= 1.3.3.0
-
-
--- executable frontend_test
---   default-language:    Haskell2010
---   main-is:             Frontend.hs
---   hs-source-dirs:      src
---   other-modules:
---     LLVMGen
---     Ast
---     Parser
---   build-depends:
---       base                 >= 4.7 && <5
---     , haskeline            >= 0.7.5.0
---     , llvm-hs              >= 9.0.1
---     , llvm-hs-pure         >= 9.0.0
---     , parsec               >= 3.1
---     , mtl                  >= 2.1.3
---     , transformers         >= 0.3.0.0 && < 0.6
---     , containers           >= 0.4
---     , bytestring           >= 0.10
---     , QuickCheck           >= 2.13
---     , directory            >= 1.3.3.0
-

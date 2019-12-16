@@ -22,6 +22,7 @@ import qualified QuickCheck.GenT as QCT
 import qualified Data.Map as Map
 
 import Ast
+import PrettyAst
 
 --------------------------------------
 -- UTILS - ---------------------------
@@ -46,8 +47,6 @@ funTys = [ --FunTy "f1" [(TInt, "a1"), (TInt, "a2")] TInt
 
 run = sample $ execAstGenerator mainTy funTys
 run' = generate $ execAstGenerator mainTy funTys
-
-main = run'
 
 -- Name, arg types and names, return type (must not be void)
 data FunTy = FunTy Id [(Ty, Id)] Ty deriving Show
@@ -102,17 +101,19 @@ instance QCT.MonadGen (StateT s Gen) where
 
 -- Entry Points
 
--- | Gen Prog
-progGen :: Gen Prog
-progGen = do
-  fdecls <- execAstGenerator mainTy funTys
-  return $ (Gfdecl . noLoc) <$> fdecls
+instance Arbitrary Prog where
+  arbitrary = execAstGenerator mainTy funTys
+
+-- -- | Gen Prog
+-- progGen :: Gen Prog
+-- progGen = do
+--   fmap (Gfdecl . noLoc) execAstGenerator mainTy funTys
 
 -- | Execute the generator given a main funty and a list of other funtys
-execAstGenerator :: FunTy -> [FunTy] ->  Gen [Fdecl]
+execAstGenerator :: FunTy -> [FunTy] -> Gen Prog
 execAstGenerator main fs =
   let contextGen = execStateT genProg (initGlobalContext main fs) in
-  fmap ((map fCtxtToFdecl) . Map.elems . contexts) contextGen
+  fmap (Prog . (map (Gfdecl . noLoc . fCtxtToFdecl)) . Map.elems . contexts) contextGen
   where
     fCtxtToFdecl :: FunctionContext -> Fdecl
     fCtxtToFdecl (FunctionContext fty (FunctionSubContext Nothing _ _ _ block)) = funTytoFdecl fty (reverse block)

@@ -97,7 +97,7 @@ data Decl =
   | Gfext (Node Fext)
   deriving (Show, Eq)
 
-type Prog = [Decl]
+data Prog = Prog [Decl] deriving (Eq)
 
 -- | Name of the function the interpreter and compiler will start at
 entryFunctionName :: Id

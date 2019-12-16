@@ -10,6 +10,7 @@ import Control.Monad
 import Control.Monad.IO.Class
 
 import Ast
+import PrettyAst
 
 -- UTILS
 
@@ -147,7 +148,7 @@ callExp = do
 -- DECLARATIONS
 
 langParser :: Parser Prog
-langParser = whiteSpace >> sequenceOfDecl
+langParser = Prog <$> (whiteSpace >> sequenceOfDecl)
 
 sequenceOfDecl :: Parser [Decl]
 sequenceOfDecl = many decl

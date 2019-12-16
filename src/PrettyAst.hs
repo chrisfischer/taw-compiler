@@ -156,4 +156,7 @@ ulevel _ = 9
 
 -- | Pretty print a Taw program
 renderProg :: Prog -> String
-renderProg prog = PP.render . PP.vcat $ map ((<> PP.char '\n') . pp) prog
+renderProg (Prog prog) = PP.render . PP.vcat $ map ((<> PP.char '\n') . pp) prog
+
+instance Show Prog where
+  show = renderProg

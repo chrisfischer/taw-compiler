@@ -228,18 +228,18 @@ extractDeclTy (T.Gfext (T.Node (T.Fext retty name args) _)) =
 
 -- | Extract the types of each global declaration
 extractTypes :: T.Prog -> Either String L.FunctionTypeContext
-extractTypes p = L.execFunctionTypeGen $ mapM_ extractDeclTy p
+extractTypes (T.Prog p) = L.execFunctionTypeGen $ mapM_ extractDeclTy p
 
 -- | Compile a Taw program into an existing LLVM module
 cmpProgWithModule :: AST.Module -> T.Prog -> Either String AST.Module
-cmpProgWithModule mod p =
+cmpProgWithModule mod p@(T.Prog prog) =
   L.runLLVM mod $ cmpProg p
   where
     cmpProg :: T.Prog -> L.LLVM ()
     cmpProg p = do
       case extractTypes p of
         Left err -> throwError err
-        Right ctxt -> mapM_ (cmpDecl ctxt) p
+        Right ctxt -> mapM_ (cmpDecl ctxt) prog
 
 -- | Compile a Taw program
 cmpProg :: String -> T.Prog -> Either String AST.Module

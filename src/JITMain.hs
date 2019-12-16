@@ -93,7 +93,7 @@ updateMainRet retExp retty = do
   removeDefinitionLL T.entryFunctionName
   main' <- mainFromStmts retExp retty
   s <- get
-  case cmpProgWithModule (llmod s) (fs s ++ [main']) of
+  case cmpProgWithModule (llmod s) $ T.Prog (fs s ++ [main']) of
     Left err -> throwError err
     Right ll' -> modify $ \s -> s { llmod = ll' }
 
@@ -101,17 +101,17 @@ updateMainRet retExp retty = do
 -- program and make functions available for future statements and expressions
 jitProg :: ((MonadState LoopContext) m, MonadIO m, MonadError String m) =>
            T.Prog -> m ()
-jitProg p =
-  if declaresMain p then throwError "cannot declare main"
+jitProg p@(T.Prog prog) =
+  if declaresMain prog then throwError "cannot declare main"
   else do
     s <- get
-    mapM_ (removeDefinition . T.nameFromDecl) p
+    mapM_ (removeDefinition . T.nameFromDecl) prog
     case cmpProgWithModule (llmod s) p of
       Left err -> throwError err
-      Right ll -> modify $ \s -> s { llmod = ll, fs = p ++ fs s }
+      Right ll -> modify $ \s -> s { llmod = ll, fs = prog ++ fs s }
   where
     -- | Ensure that main was not declared
-    declaresMain :: T.Prog -> Bool
+    declaresMain :: [T.Decl] -> Bool
     declaresMain = any $ (== T.entryFunctionName) . T.nameFromDecl
 
 -- | Compile the given statement and make any declarations available
@@ -167,10 +167,10 @@ repl v Nothing =
   void $ runInputT defaultSettings $ evalStateT (runExceptT loop)
     emptyLoopContext { verbose = v }
 repl v (Just fileName) =
-  P.parseFileM fileName $ \p ->
+  P.parseFileM fileName $ \p@(T.Prog prog) ->
     cmpProgM fileName p $ \ll ->
       void $ runInputT defaultSettings $ evalStateT (runExceptT loop)
-          emptyLoopContext { verbose = v, llmod = ll, fs = p }
+          emptyLoopContext { verbose = v, llmod = ll, fs = prog }
 
 main :: IO ()
 main = do
