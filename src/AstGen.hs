@@ -415,7 +415,7 @@ genFunTy = do
   return $ FunTy funId args rty
 
 -- | Generate an arg that's either a primitive type or
--- a function whose arguments are all primitives
+-- a function whoQCT.se arguments are all primitives
 genArg :: Gen (Ty, Id)
 genArg = do
   ty <- frequency [(1, genSimpleTRef), (4, genPrimTy)]
@@ -456,7 +456,8 @@ genPrimTy = elements [TBool, TInt]
 -- the current subcontext
 genFuncBodyBlock :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
 genFuncBodyBlock = do
-  QCT.listOf $ QCT.oneof [genSimpleStmt, genIfStmt, genWhileStmt, genForStmt]
+  numStmts <- QCT.choose (1, 15)  -- limit the number of top level statements in a function body
+  QCT.vectorOf numStmts (QCT.oneof [genSimpleStmt, genIfStmt, genWhileStmt, genForStmt])
   genRetStmt
 
 -- | Generate an arbitrary return statement based on the current function's
@@ -506,7 +507,8 @@ genIfStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
 genIfStmt = do
   condition      <- genBoolExp
   pushSubContext
-  QCT.listOf genSimpleStmt
+  numStmts       <- QCT.choose (1, 15)
+  QCT.vectorOf numStmts genSimpleStmt
   ifBlock        <- popSubContext
   elseMaybeBlock <- genMaybeBlock
   pushStmt $ If (noLoc condition) ifBlock elseMaybeBlock
@@ -515,8 +517,9 @@ genIfStmt = do
 -- Just some arbitrary block
 genMaybeBlock :: (QCT.MonadGen m, MonadState GlobalContext m) => m (Maybe Block)
 genMaybeBlock = do
-  pushSubContext -- TODO: refactor so we only do the work if necessary
-  QCT.listOf genSimpleStmt
+  pushSubContext -- TODO: refactor so we only do the work if necessary 
+  numStmts       <- QCT.choose (1, 15)
+  QCT.vectorOf numStmts genSimpleStmt
   block <- popSubContext
   maybe <- QCT.arbitrary'
   if maybe
@@ -534,7 +537,8 @@ genWhileStmt = do
   id       <- genFreshId
   pushStmt $ Decl $ Vdecl id (noLoc $ CInt 0) -- did not add this variable to ctxt
   pushSubContext
-  QCT.listOf genSimpleStmt
+  numStmts       <- QCT.choose (1, 15)
+  QCT.vectorOf numStmts genSimpleStmt
   block <- popSubContext
   let var  = noLoc $ Id id
       cond = Bop Lt var (noLoc $ CInt numIters)
@@ -550,7 +554,8 @@ genForStmt = do
   numIters <- QCT.choose (1, 20) -- perform 1 - 20 iterations
   id       <- genFreshId
   pushSubContext
-  QCT.listOf genSimpleStmt
+  numStmts       <- QCT.choose (1, 15)
+  QCT.vectorOf numStmts genSimpleStmt
   block <- popSubContext
   let decls  = [Vdecl id (noLoc $ CInt 0)] -- did not add this variable to ctxt
       var    = noLoc $ Id id
