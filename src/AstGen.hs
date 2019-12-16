@@ -83,6 +83,8 @@ data GlobalContext
   , contexts :: Map.Map Id FunctionContext
     -- Map from retty to function type
   , funs :: Map.Map Ty [FunTy]
+    -- Next integer to append to variable name for unique ids
+  , nextId :: Int
   } deriving Show
 
 data FunctionContext
@@ -144,9 +146,15 @@ initGlobalContext main@(FunTy fn _ _) fs =
   let fds = foldr (\f@(FunTy _ _ retty) acc -> Map.alter (Just [f] <>) retty acc) Map.empty fs -- no main
       ctxts = Map.fromList $
         map (\f@(FunTy fn _ _) -> (fn, emptyFunctionContext f)) fs'
-  in GlobalContext fn ctxts fds
+  in GlobalContext fn ctxts fds 0
 
 -- Helper functions
+
+getNextInt :: (QCT.MonadGen m, MonadState GlobalContext m) => m Int
+getNextInt = do
+ id <- gets nextId
+ modify $ \s -> s { nextId = id + 1 }
+ return id
 
 currentFunctionContext :: (QCT.MonadGen m, MonadState GlobalContext m) =>
                           m FunctionContext
@@ -569,7 +577,9 @@ genProg = do
 
 -- | QCT Monad: Generate a fresh arbitrary variable name
 genFreshId :: (QCT.MonadGen m, MonadState GlobalContext m) => m Id
-genFreshId = QCT.liftGen $ unpack <$> (matchRegexp $ pack "[a-z]\\w+")
+genFreshId = do
+  id <- getNextInt
+  return $ "var_" ++ (show id)
 
 -- | Gen Monad: Generate a fresh arbitrary variable name
 genFreshId' :: Gen Id
