@@ -1,10 +1,10 @@
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 
 module Main where
 
 import Data.Int
 
+import Control.Monad
 import Control.Monad.IO.Class
 
 import Test.QuickCheck
@@ -13,7 +13,7 @@ import Test.QuickCheck.Monadic
 import Ast
 import AstGen
 import JIT (runJIT)
-import Frontend (cmpProg, idToShortBS)
+import Frontend (cmpProg, cmpProgM, idToShortBS)
 import Interpreter (executeProg, ValueTy(VInt))
 import PrettyAst
 
@@ -26,13 +26,12 @@ prop_interpCmp p = monadicIO $ do
       resCmp <- liftIO $ runJIT ll (idToShortBS entryFunctionName) False
       case (resInterp, resCmp) of
         (Right (VInt v1), Right v2) -> assert $ v1 == fromIntegral v2
-        (Left err, _) -> do
-          liftIO $ putStrLn $ renderProg p
-          error $ show err
-        (_, Left err) -> do
-          liftIO $ putStrLn $ renderProg p
-          error $ show err
-
+        (Left err, _) -> showError err
+        (_, Left err) -> showError err
+  where
+    showError err = do
+      liftIO $ putStrLn $ renderProg p
+      error $ show err
 
 main :: IO ()
 main = quickCheckWith stdArgs { maxSuccess = 10 } prop_interpCmp
