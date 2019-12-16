@@ -7,16 +7,17 @@ module AstGen where
 
 import Data.Maybe (fromMaybe)
 import Data.Tuple (swap)
+import Data.Text (pack, unpack)
 
 import Control.Applicative
 import Control.Monad
 import Control.Monad.State
 import Control.Monad.Identity
 
-
 import Test.QuickCheck
 import Test.QuickCheck as QC
 import Test.QuickCheck.Gen
+import Test.QuickCheck.StringRandom (matchRegexp)
 import qualified QuickCheck.GenT as QCT
 import qualified Data.Map as Map
 
@@ -45,6 +46,8 @@ funTys = [ --FunTy "f1" [(TInt, "a1"), (TInt, "a2")] TInt
 
 run = sample $ execAstGenerator mainTy funTys
 run' = generate $ execAstGenerator mainTy funTys
+
+main = run'
 
 -- Name, arg types and names, return type (must not be void)
 data FunTy = FunTy Id [(Ty, Id)] Ty deriving Show
@@ -430,7 +433,7 @@ genRetty = RetVal <$> genPrimitiveTy
 -- the current subcontext
 genFuncBodyBlock :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
 genFuncBodyBlock = do
-  QCT.listOf $ QCT.oneof [genSimpleStmt, genIfStmt]
+  QCT.listOf $ QCT.oneof [genSimpleStmt, genIfStmt, genWhileStmt, genForStmt]
   genRetStmt
 
 -- | Generate an arbitrary return statement based on the current function's
@@ -447,14 +450,18 @@ genSimpleStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
 genSimpleStmt = QCT.oneof [genAssnStmt, genDeclStmt]
 
 -- | Generate an arbitrary assign statement and push it to the context
+-- or default to a declaration if no variables exist in scope
 genAssnStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
 genAssnStmt = do
   ty    <- genPrimitiveTy
   exp   <- genExpWithType ty
   vars  <- inScopeVarsWithType ty
-  index <- QCT.liftGen $ choose (0, (length vars) - 1)
-  let id = vars !! index
-  pushStmt $ Assn (noLoc $ Id id) (noLoc exp)
+  if (length vars) == 0 
+  then genDeclStmt
+  else do
+    index <- QCT.liftGen $ choose (0, (length vars) - 1)
+    let id = vars !! index
+    pushStmt $ Assn (noLoc $ Id id) (noLoc exp)
 -- TODO: be able to change var types and update context accordingly
 --  varsToTys <- inScopeVars
 --  index     <- QCT.liftGen $ choose (0, (Map.size varsToTys))
@@ -503,6 +510,41 @@ genMaybeBlock = do
   then return $ Just $ block
   else return $ Nothing
 
+-- | Generate a while statment that's guaranteed to terminate
+-- Method: declare a new integer, but don't add it to the context
+-- Therefore, nothing else will change it. At the end of the 
+-- generated block, add a statement to increment its value
+-- so that it approaches the termination condition.
+genWhileStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
+genWhileStmt = do
+  numIters <- QCT.choose (1, 20) -- perform 1 - 20 iterations
+  id       <- genFreshId
+  pushStmt $ Decl $ Vdecl id (noLoc $ CInt 0) -- did not add this variable to ctxt
+  pushSubContext
+  QCT.listOf genSimpleStmt
+  block <- popSubContext
+  let var  = noLoc $ Id id
+      cond = Bop Lt var (noLoc $ CInt numIters)
+      assn :: Block
+      assn = [noLoc $ Assn var (noLoc $ Bop Add var (noLoc $ CInt 1))]
+  pushStmt $ While (noLoc cond) (assn ++ block) 
+
+-- | Generate a for loop that's guaranteed to terminate
+-- Method: don't add the initialized vars to context so
+-- nothing else changes it and increment at every iteration
+genForStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => m ()
+genForStmt = do
+  numIters <- QCT.choose (1, 20) -- perform 1 - 20 iterations
+  id       <- genFreshId
+  pushSubContext
+  QCT.listOf genSimpleStmt
+  block <- popSubContext 
+  let decls  = [Vdecl id (noLoc $ CInt 0)] -- did not add this variable to ctxt
+      var    = noLoc $ Id id
+      cond   = Bop Lt var (noLoc $ CInt numIters)
+      update = Assn var (noLoc $ Bop Add var (noLoc $ CInt 1)) 
+  pushStmt $ For decls (Just $ noLoc cond) (Just $ noLoc update) block
+
 -- Top Level Generators
 
 -- | Generate a function declaration corresponding to the argued FunTy
@@ -517,21 +559,12 @@ genProg = do
   fCtxts <- gets contexts
   let ids = Map.keys fCtxts
   foldr (\id acc -> buildCtxtForFunId id >> acc) (return ()) (ids)
-{--
-myFun :: (QCT.MonadGen m, MonadState GlobalContext m) => Id -> m ()
-myFun id = do
-  setCurrentFun id
-  curr <- currentFunctionContext
-  let funty@(FunTy _ _ rty) = fty curr
-  exp  <- if rty == TInt then genIntExp else genBoolExp
-  pushStmt $ Ret $ Just $ noLoc exp
---}
 
 -- Helpers
 
 -- | Generate a fresh arbitrary variable name TODO: readd that library I was using for this
 genFreshId :: (QCT.MonadGen m, MonadState GlobalContext m) => m Id
-genFreshId = QCT.arbitrary'
+genFreshId = QCT.liftGen $ unpack <$> (matchRegexp $ pack "[a-z]\\w+") -- QCT.arbitrary'
 
 {--
 --------------------------------------
