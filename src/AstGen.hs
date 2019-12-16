@@ -331,7 +331,6 @@ genBoolExp' n | n > 0 = do
                liftM3 Bop genBoolBinop boolExp boolExp  ,
                liftM3 Bop genOrdCompBinop intExp intExp ,
                liftM3 Bop genEqCompBinop intExp intExp  ,
-               liftM3 Bop genEqCompBinop boolExp boolExp,
                genCallExpWithType TBool                 ]
     where boolExp = noLoc <$> (genBoolExp' n')
           intExp  = noLoc <$> (genIntExp'  n')
