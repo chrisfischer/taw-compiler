@@ -294,7 +294,7 @@ popSubContext = do
     Just currSub' ->
       modifyCurrentFunctionContext curr { currSubCtxt = currSub' }
     Nothing -> error "Cannot pop top level subcontext"
-  return $ stmts currSub
+  return $ reverse $ stmts currSub
 
 pushStmt :: (QCT.MonadGen m, MonadState GlobalContext m) => Stmt -> m ()
 pushStmt s = do
