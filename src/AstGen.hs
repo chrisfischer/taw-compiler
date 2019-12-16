@@ -31,10 +31,11 @@ nol x = noLoc <$> x
 
 emptyFdecl r fn as = Fdecl r fn as []
 
--- variables for testing
+-- | The type of the main function in every possible program
 mainTy :: FunTy
 mainTy = FunTy "main" [] TInt
 
+-- variables for testing
 funTys :: [FunTy]
 funTys = [ --FunTy "f1" [(TInt, "a1"), (TInt, "a2")] TInt
          --  FunTy "f2" [(TBool, "b1")] TBool
@@ -45,7 +46,7 @@ funTys = [ --FunTy "f1" [(TInt, "a1"), (TInt, "a2")] TInt
          ]
 
 run = sample $ execAstGenerator mainTy funTys
-run' = generate $ execAstGenerator mainTy funTys
+run' = generate $ progGen -- execAstGenerator mainTy funTys
 
 -- Name, arg types and names, return type (must not be void)
 data FunTy = FunTy Id [(Ty, Id)] Ty deriving Show
@@ -101,12 +102,15 @@ instance QCT.MonadGen (StateT s Gen) where
 -- Entry Points
 
 instance Arbitrary Prog where
-  arbitrary = execAstGenerator mainTy funTys
+  arbitrary = progGen -- execAstGenerator mainTy funtys
 
--- -- | Gen Prog
--- progGen :: Gen Prog
--- progGen = do
---   fmap (Gfdecl . noLoc) execAstGenerator mainTy funTys
+
+-- | Gen Prog
+progGen :: Gen Prog
+progGen = do
+  numFuns <- choose (0, 10) -- maximum 10 functions
+  ftys <- vectorOf numFuns genFunTy
+  execAstGenerator mainTy ftys
 
 -- | Execute the generator given a main funty and a list of other funtys
 execAstGenerator :: FunTy -> [FunTy] -> Gen Prog
@@ -315,9 +319,16 @@ genBoolUnop = QCT.liftGen $ return Ast.Lognot
 genBoolBinop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Binop
 genBoolBinop = QCT.liftGen $ elements [Ast.And, Ast.Or]
 
+genIntUnop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Unop
+genIntUnop = QCT.liftGen $ return Ast.Neg
+
 genIntBinop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Binop
 genIntBinop = QCT.liftGen $ elements [Ast.Add, Ast.Sub, Ast.Mul]
+<<<<<<< HEAD
 -- ^ TODO: add logical operators here
+=======
+-- ^ TODO: add logical operators here, readd Div and Mod , Ast.Div, Ast.Mod
+>>>>>>> WIP
 
 genOrdCompBinop :: (QCT.MonadGen m, MonadState GlobalContext m) => m Binop
 genOrdCompBinop = QCT.liftGen $ elements [Ast.Lt, Ast.Lte, Ast.Gt, Ast.Gte]
@@ -371,9 +382,12 @@ genIntExp' 0 = do
                                                 else []
 genIntExp' n | n > 0 =
   QCT.oneof [genIntExp' 0,
+             liftM2 Uop genIntUnop subExp        ,
              liftM3 Bop genIntBinop subExp subExp,
              genCallExpWithType TInt             ]
   where subExp = noLoc <$> (genIntExp' (n `div` 2))
+
+
 
 -- | Generates a correct Call expression for a function that returns the argued type
 genCallExpWithType :: (QCT.MonadGen m, MonadState GlobalContext m) => Ty -> m Exp
@@ -411,25 +425,64 @@ genPrimitiveTy :: (QCT.MonadGen m, MonadState GlobalContext m) => m Ty
 genPrimitiveTy = QCT.elements [TBool, TInt]
 
 -- | Generate an arbitrary Ty
-genTy :: (QCT.MonadGen m, MonadState GlobalContext m) => m Ty
+genTy :: Gen Ty
 genTy = QCT.sized genTy'
 
-genTy' :: (QCT.MonadGen m, MonadState GlobalContext m) => Int -> m Ty
+genTy' :: Gen Ty
 genTy' 0 = genPrimitiveTy
 genTy' n | n > 0 =
   QCT.oneof [genTy' 0                              ,
              TRef <$> (genRty' (n `div` 2 `mod` 3))] -- TODO: improve this limit strategy
 
 -- | Generate an arbitrary Rty (function type)
-genRty :: (QCT.MonadGen m, MonadState GlobalContext m) => m Rty
+genRty :: Gen Rty
 genRty = QCT.sized genRty'
 
-genRty' :: (QCT.MonadGen m, MonadState GlobalContext m) => Int -> m Rty
+genRty' :: Int -> Gen Rty
 genRty' n = liftM2 RFun (QCT.listOf $ genTy' n) genRetty
 
 -- | Generate an arbitrary return type
-genRetty :: (QCT.MonadGen m, MonadState GlobalContext m) => m Retty
+genRetty :: Gen Retty
 genRetty = RetVal <$> genPrimitiveTy
+
+-- | Generate FunTy that is a good candidate for our context
+-- in that any arguments that are functions will take only
+-- primitives for their arguments
+genFunTy :: Gen FunTy
+genFunTy = do
+  funId   <- genFreshId
+  numArgs <- choose (0, 10) -- limit to 10 args
+  args    <- vectorOf numArgs genArg
+  rty     <- genPrimTy
+  return $ FunTy funId args rty
+
+-- | Generate an arg that's either a primitive type or
+-- a function whose arguments are all primitives
+genArg :: Gen (Ty, Id)
+genArg = do
+  ty <- frequency [(1, genSimpleFunTy), (4, genPrimTy)]
+  id <- genFreshId
+  return $ (ty, id)
+
+-- | Generate a FunTy whose arguments are all primitives
+genSimpleFunTy :: Gen FunTy
+genSimpleFunTy = do
+  funId   <- genFreshId
+  numArgs <- choose (0, 10) -- limit to 10 args
+  args    <- vectorOf numArgs genSimpleArg
+  rty     <- genPrimTy
+  return $ FunTy funId args rty
+
+-- | Generate an argument of a primitive type
+genSimpleArg :: Gen (Ty, Id)
+genSimpleArg = do
+  ty <- genPrimTy
+  id <- genFreshId
+  return $ (ty, id)
+
+-- | Generate a primitive type
+genPrimTy :: Gen Ty
+genPrimTy = elements [TBool, TInt]
 
 -- Statement/Block Generators
 
