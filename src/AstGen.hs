@@ -584,7 +584,7 @@ genProg = do
 genFreshId :: (QCT.MonadGen m, MonadState GlobalContext m) => m Id
 genFreshId = do
   id <- getNextInt
-  return $ "var_" ++ (show id)
+  return $ "var" ++ (show id)
 
 -- | Gen Monad: Generate a fresh arbitrary variable name
 genFreshId' :: Gen Id

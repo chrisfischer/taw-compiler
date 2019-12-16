@@ -154,8 +154,8 @@ sequenceOfDecl :: Parser [Decl]
 sequenceOfDecl = many decl
 
 decl :: Parser Decl
-decl = Ast.Gfdecl . noLoc <$> try fdecl
-   <|> Ast.Gfext  . noLoc <$> fext
+decl = Ast.Gfext  . noLoc <$> try fext
+   <|> Ast.Gfdecl . noLoc <$> fdecl
 
 fdecl :: Parser Fdecl
 fdecl = do
